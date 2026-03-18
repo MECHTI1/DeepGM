@@ -248,7 +248,7 @@ class PocketRecord:
 #   1) rr.resname = "HIS"
 #   2) atoms include CA plus donor atoms (ND1/NE2)
 # Example output (Part 4):
-#   1) x_reschem vector with 31 scalar chemistry features
+#   1) x_reschem vector with 6 metal-relevant chemistry features
 #   2) donor_coords [K,3], donor_mask [K], and FG centroid [3]
 
 def residue_one_hot(resname: str) -> Tensor:
@@ -271,15 +271,13 @@ def residue_charge_class(resname: str) -> Tensor:
 
 def residue_chemistry_flags(resname: str) -> Tensor:
     """
-    Return the explicit chemistry flags:
-    polar, aromatic, sulfur, donor-capable, acceptor-capable, acidic, basic, histidine
+    Return the lean chemistry flags used with ESM embeddings:
+    donor-capable, acceptor-capable, sulfur, acidic, basic, histidine
     """
     flags = [
-        float(resname in POLAR),
-        float(resname in AROMATIC),
-        float(resname in SULFUR),
         float(resname in DONOR_CAPABLE),
         float(resname in ACCEPTOR_CAPABLE),
+        float(resname in SULFUR),
         float(resname in NEGATIVE),
         float(resname in POSITIVE),
         float(resname == "HIS"),
@@ -289,19 +287,12 @@ def residue_chemistry_flags(resname: str) -> Tensor:
 
 def build_x_reschem(residue: ResidueRecord) -> Tensor:
     """
-    Build the explicit handcrafted scalar chemistry feature vector.
+    Build a compact handcrafted chemistry feature vector.
 
     Output dimension:
-        20 (AA one-hot)
-      +  3 (charge class)
-      +  8 (chem flags)
-      = 31 dims
+        6 (chem flags)
     """
-    return torch.cat([
-        residue_one_hot(residue.resname),
-        residue_charge_class(residue.resname),
-        residue_chemistry_flags(residue.resname),
-    ], dim=0)
+    return residue_chemistry_flags(residue.resname)
 
 
 def donor_atom_names(resname: str) -> List[str]:
@@ -701,7 +692,7 @@ def residue_to_stage1_node_features(rr: ResidueRecord, metal_coord: Tensor, esm_
 
     Outputs:
         x_esm      [D_esm]
-        x_reschem  [31]
+        x_reschem  [6]
         x_role     [2]
         x_dist_raw [4]
         x_misc     [3]
@@ -908,7 +899,7 @@ class RBFExpansion(nn.Module):
 # hidden scalar channels for the graph model.
 # ============================================================
 # Example input (Part 11):
-#   1) node scalars: x_esm [N,256], x_reschem [N,31], x_role [N,2], x_dist_raw [N,4], x_misc [N,3]
+#   1) node scalars: x_esm [N,256], x_reschem [N,6], x_role [N,2], x_dist_raw [N,4], x_misc [N,3]
 #   2) edge scalars: edge_dist_raw [E,2]
 # Example output (Part 11):
 #   1) NodeScalarEncoder -> s0 [N, hidden_s]
@@ -920,7 +911,7 @@ class NodeScalarEncoder(nn.Module):
 
     Inputs:
       - x_esm      [N, D_esm]
-      - x_reschem  [N, 31]
+      - x_reschem  [N, 6]
       - x_role     [N, 2]
       - x_dist_raw [N, 4]
       - x_misc     [N, 3]
@@ -937,8 +928,8 @@ class NodeScalarEncoder(nn.Module):
         )
         self.dist_rbf = RBFExpansion(n_rbf=n_rbf, d_min=0.0, d_max=12.0)
 
-        # 31 (chem) + 2 (role) + 3 (misc) + 4*n_rbf (RBF distance) + esm_proj
-        in_dim = esm_proj + 31 + 2 + 3 + 4 * n_rbf
+        # 6 (chem) + 2 (role) + 3 (misc) + 4*n_rbf (RBF distance) + esm_proj
+        in_dim = esm_proj + 6 + 2 + 3 + 4 * n_rbf
 
         self.out_proj = nn.Sequential(
             nn.Linear(in_dim, out_dim),
