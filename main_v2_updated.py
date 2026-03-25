@@ -1,32 +1,7 @@
 #!/usr/bin/env python3
-# TODO: reconsider graph edge definition beyond only Cα radius
-"""
-TODO: One caution about angles
-    For things like omega, using the raw angle as one scalar can sometimes be a bit awkward because angles wrap around.
-    For example, 179° and -179° are very close physically, but numerically they look far apart.
-    So often it is better to encode an angle as:
-    sin(angle)
-    cos(angle)
-    instead of one raw angle value.
-    That means:
-    omega → maybe 2 scalar channels: sin(omega), cos(omega)
-
-TODO: For each residue:
-    1)add net_ligand_vector, which are the sum of vectors foemed bewtene the metal ligans to the metal, and
-    2) calculate (directly or not) the angle created by the intersection of this vector to the one that which formed between the metal ion to the residue
- For each metal site, compute
-     v_net = Σ_i (r_ligand_i - r_metal)
- and
-    ||v_net||
- For each nearby residue, compute
-     v_res = r_residue - r_metal
-     ||v_res||
- and
-     cos(θ) = (v_net · v_res) / (||v_net|| ||v_res|| + eps)
-  Add to GVP:
-  vector features: v_net, v_res
-  scalar features: ||v_net||, ||v_res||, cos(θ)
-"""
+# TODO: reconsider graph edge definition beyond only Cα radius, when will be added RING edges, they will may be inserted.
+# TODO: One caution about angles
+# For all external features, like omega, normalize it (by using z-score).
 
 """
 Stage-1 residue-level Zn-pocket classifier (late-fusion ESM + simplified GVP)
@@ -163,8 +138,6 @@ NODE_FEATURES_CURRENTLY_HANDLED = [
     "min_donor_to_metal",
     "second_min_donor_to_metal",
     "plddt",
-    "wall_distance",
-    "is_wall_residue",
     "net_ligand_vector_norm",
     "metal_to_residue_vector_norm",
     "cos_theta_net_to_residue",
@@ -222,8 +195,6 @@ NODE_FEATURE_GROUPS_RECOMMENDED = {
     ],
     "confidence_and_pocket_position": [
         "plddt",
-        "wall_distance",
-        "is_wall_residue",
     ],
 }
 
@@ -318,8 +289,6 @@ class ResidueRecord:
     esm_embedding: Optional[Tensor] = None
     is_first_shell: bool = False
     is_second_shell: bool = False
-    wall_distance: float = 0.0
-    is_wall_residue: bool = False
 
     # Optional external per-residue features (Rosetta / electrostatics / burial)
     external_features: Dict[str, float] = field(default_factory=dict)
@@ -607,7 +576,7 @@ def attach_external_residue_features(
 
 
 # ============================================================
-# Part 7: Shell annotation and naive wall features
+# Part 7: Shell annotation
 # ============================================================
 
 def annotate_shell_roles(
@@ -635,24 +604,6 @@ def annotate_shell_roles(
             continue
         dists = [safe_norm(fg - f0, dim=-1).item() for f0 in first_shell_centroids]
         rr.is_second_shell = min(dists) <= second_shell_cutoff
-
-
-def annotate_wall_features_naive(
-    pocket: PocketRecord,
-    pocket_radius: float = DEFAULT_POCKET_RADIUS,
-) -> None:
-    metal = pocket.metal_coord.float()
-
-    for rr in pocket.residues:
-        ca = rr.ca()
-        if ca is None:
-            rr.wall_distance = pocket_radius
-            rr.is_wall_residue = False
-            continue
-
-        d = float(safe_norm(ca - metal, dim=-1).item())
-        rr.wall_distance = max(0.0, pocket_radius - d)
-        rr.is_wall_residue = bool(d >= 0.75 * pocket_radius)
 
 
 # ============================================================
@@ -774,7 +725,7 @@ def residue_to_stage1_node_features(rr: ResidueRecord, metal_coord: Tensor, esm_
     )
 
     x_misc = torch.tensor(
-        [float(rr.plddt), float(rr.wall_distance), float(rr.is_wall_residue)],
+        [float(rr.plddt)],
         dtype=torch.float32,
     )
 
@@ -818,7 +769,6 @@ def pocket_to_pyg_data(
     edge_radius: float = DEFAULT_EDGE_RADIUS,
 ) -> Data:
     annotate_shell_roles(pocket)
-    annotate_wall_features_naive(pocket)
     v_net = compute_net_ligand_vector(pocket)
 
     node_dicts = [residue_to_stage1_node_features(rr, pocket.metal_coord, esm_dim, v_net) for rr in pocket.residues]
@@ -944,7 +894,7 @@ class NodeScalarEncoder(nn.Module):
       - x_reschem  [N, 30]
       - x_role     [N, 2]
       - x_dist_raw [N, 4]
-      - x_misc     [N, 6] (plddt, wall, wall_flag, ||v_net||, ||v_res||, cos(theta))
+      - x_misc     [N, 4] (plddt, ||v_net||, ||v_res||, cos(theta))
       - x_env      [N, 14]
 
     Distances are RBF-expanded internally.
@@ -954,8 +904,8 @@ class NodeScalarEncoder(nn.Module):
         super().__init__()
         self.dist_rbf = RBFExpansion(n_rbf=n_rbf, d_min=0.0, d_max=12.0)
 
-        # 30 (reschem) + 2 (role) + 6 (misc) + 14 (external env) + 4*n_rbf
-        in_dim = 30 + 2 + 6 + 14 + 4 * n_rbf
+        # 30 (reschem) + 2 (role) + 4 (misc) + 14 (external env) + 4*n_rbf
+        in_dim = 30 + 2 + 4 + 14 + 4 * n_rbf
 
         self.out_proj = nn.Sequential(
             nn.Linear(in_dim, out_dim),
@@ -1437,8 +1387,6 @@ def save_pocket_metadata_json(pocket: PocketRecord, outpath: str) -> None:
                 "plddt": rr.plddt,
                 "is_first_shell": rr.is_first_shell,
                 "is_second_shell": rr.is_second_shell,
-                "wall_distance": rr.wall_distance,
-                "is_wall_residue": rr.is_wall_residue,
                 "external_features": rr.external_features,
                 "atom_names": sorted(list(rr.atoms.keys())),
             }
