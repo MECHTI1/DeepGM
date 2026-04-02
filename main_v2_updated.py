@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# TODO: reconsider graph edge definition beyond only Cα radius, when will be added RING edges, they will may be inserted.
+# TODO: Reconsider graph edge definition beyond only Cα radius, when will be added RING edges, they will may be inserted.
 # TODO: One caution about angles
+# TODO: The two-task loss is too simplistic.  currently do: loss = CE(metal) + CE(ec) -> FIX
+# TODO: Need to download EC number of enzymes
 # For all external features, like omega, normalize it (by using z-score).
 
 """
@@ -66,12 +68,8 @@ except Exception as e:
     raise ImportError(
         "This script requires torch_geometric. Install it before running."
     ) from e
+from Bio.PDB import MMCIFParser, PDBParser
 
-try:
-    from Bio.PDB import MMCIFParser, PDBParser
-    BIOPYTHON_AVAILABLE = True
-except Exception:
-    BIOPYTHON_AVAILABLE = False
 
 
 # ============================================================
@@ -122,6 +120,7 @@ DEFAULT_EDGE_RADIUS = 6.0
 # script. Some are already handled; others are planned external features.
 # ------------------------------------------------------------------
 NODE_FEATURES_CURRENTLY_HANDLED = [
+    # x_reschem
     "aa_one_hot",
     "charge_class_3way",
     "donor_flag",
@@ -131,22 +130,36 @@ NODE_FEATURES_CURRENTLY_HANDLED = [
     "acidic_flag",
     "basic_flag",
     "histidine_flag",
+    # x_role
     "is_first_shell",
     "is_second_shell",
-    "ca_to_metal",
+    # x_dist_raw
+    # "ca_to_metal",
     "fg_to_metal",
-    "min_donor_to_metal",
-    "second_min_donor_to_metal",
-    "plddt",
-    "net_ligand_vector_norm",
-    "metal_to_residue_vector_norm",
-    "cos_theta_net_to_residue",
-    "fg_minus_ca_vector",
-    "net_ligand_vector",
-    "metal_to_residue_vector",
-    "ca_ca_distance",
-    "fg_fg_distance",
-    "edge_direction_unit_vector",
+    # "min_donor_to_metal",
+    # "second_min_donor_to_metal",
+    # x_misc
+    # "plddt",
+    # x_env,
+    "SASA",
+    "BSA",
+    "SolvEnergy",
+    "fa_sol",
+    "fa_elec",
+    "pKa_shift",
+    "dpKa_desolv",
+    "dpKa_bg",
+    "dpKa_titr",
+    "omega",
+    "rama_prepro",
+    "fa_dun",
+    # "fa_atr",
+    # "fa_rep",
+    # x_vec
+    "v_fg_to_ca", #fg is functionla group
+    "v_net_ligand",
+    "v_res_to_metal",
+    "cos_theta_bewteen_vnetligand_to_vrestometal",
 ]
 
 # Recommended first-pass grouping for the structural branch.
@@ -166,9 +179,9 @@ NODE_FEATURE_GROUPS_RECOMMENDED = {
     "metal_geometry": [
         "is_first_shell",
         "is_second_shell",
-        "ca_to_metal",
+        # "ca_to_metal",
         "fg_to_metal",
-        "min_donor_to_metal",
+        # "min_donor_to_metal",
         "second_min_donor_to_metal",
     ],
     "burial_exposure": [
@@ -177,11 +190,11 @@ NODE_FEATURE_GROUPS_RECOMMENDED = {
         "SolvEnergy",
         "fa_sol",
     ],
-    "packing_interactions": [
-        "fa_atr",
-        "fa_rep",
-        "fa_elec",
-    ],
+    # "packing_interactions": [
+    #     "fa_atr",
+    #     "fa_rep",
+    #     "fa_elec",
+    # ],
     "electrostatic_tuning": [
         "pKa_shift",
         "dpKa_desolv",
@@ -193,9 +206,9 @@ NODE_FEATURE_GROUPS_RECOMMENDED = {
         "rama_prepro",
         "fa_dun",
     ],
-    "confidence_and_pocket_position": [
-        "plddt",
-    ],
+    # "confidence_and_pocket_position": [
+        # "plddt",
+    # ],
 }
 
 NODE_FEATURES_RECOMMENDED_KEEP_FIRST = [
@@ -208,31 +221,31 @@ NODE_FEATURES_RECOMMENDED_KEEP_FIRST = [
     *NODE_FEATURE_GROUPS_RECOMMENDED["confidence_and_pocket_position"],
 ]
 
-NODE_FEATURES_OPTIONAL_LATER = [
-    "SolvExp",
-    "GBR6",
-    "mu2",
-    "mu3",
-    "mu4",
-    "ResSigDev",
-    "DestabRank",
-    "StabRank",
-    "lk_ball",
-    "lk_ball_iso",
-    "lk_ball_bridge",
-    "lk_ball_bridge_uncpl",
-    "total",
-    "fa_intra_atr_xover4",
-    "fa_intra_rep_xover4",
-    "fa_intra_sol_xover4",
-    "fa_intra_elec",
-    "fa_dun_dev",
-    "fa_dun_rot",
-    "fa_dun_semi",
-    "p_aa_pp",
-    "dslf_fa13",
-    "pro_close",
-]
+# NODE_FEATURES_OPTIONAL_LATER = [
+#     "SolvExp",
+#     "GBR6",
+#     "mu2",
+#     "mu3",
+#     "mu4",
+#     "ResSigDev",
+#     "DestabRank",
+#     "StabRank",
+#     "lk_ball",
+#     "lk_ball_iso",
+#     "lk_ball_bridge",
+#     "lk_ball_bridge_uncpl",
+#     "total",
+#     "fa_intra_atr_xover4",
+#     "fa_intra_rep_xover4",
+#     "fa_intra_sol_xover4",
+#     "fa_intra_elec",
+#     "fa_dun_dev",
+#     "fa_dun_rot",
+#     "fa_dun_semi",
+#     "p_aa_pp",
+#     "dslf_fa13",
+#     "pro_close",
+# ]
 
 EDGE_FEATURES_RECOMMENDED_RING = [
     "ring_contact_type_one_hot",
@@ -256,10 +269,8 @@ HBOND_NODE_SUMMARIES_OPTIONAL_WITH_RING = [
 def safe_norm(x: Tensor, dim: int = -1, keepdim: bool = False, eps: float = 1e-8) -> Tensor:
     return torch.sqrt(torch.clamp((x * x).sum(dim=dim, keepdim=keepdim), min=eps))
 
-
 def normalize_vec(x: Tensor, dim: int = -1, eps: float = 1e-8) -> Tensor:
     return x / safe_norm(x, dim=dim, keepdim=True, eps=eps)
-
 
 def pairwise_distances(x: Tensor) -> Tensor:
     diff = x[:, None, :] - x[None, :, :]
@@ -437,8 +448,7 @@ def second_min_distance_to_point(coords: Tensor, point: Tensor, mask: Optional[T
 # ============================================================
 
 def parse_structure_file(filepath: str, structure_id: Optional[str] = None):
-    if not BIOPYTHON_AVAILABLE:
-        raise ImportError("Biopython is not installed. Run: pip install biopython")
+
 
     path = Path(filepath)
     sid = structure_id or path.stem

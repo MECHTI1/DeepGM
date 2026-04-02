@@ -96,7 +96,7 @@ AA_TO_INDEX = {aa: i for i, aa in enumerate(AA_ORDER)}
 
 # --- Simple residue chemistry classes ---
 NEGATIVE = {"ASP", "GLU"}
-POSITIVE = {"ARG", "LYS", "HIS"}
+POSITIVE = {"ARG", "LYS", "HIS"} #TODO: should I think somehow differentiate HIS from here since not so pos as others
 POLAR = {"ASN", "ASP", "GLN", "GLU", "HIS", "LYS", "ARG", "SER", "THR", "TYR", "CYS"}
 AROMATIC = {"PHE", "TYR", "TRP", "HIS"}
 SULFUR = {"CYS", "MET"}
@@ -123,13 +123,13 @@ DONOR_ATOMS_BY_RESIDUE = {
     "TRP": ["NE1"],
 }
 
-# --- Stage-1 defaults ---
+# --- Stage-1 defaults --- #TODO: I think is too generalized and need other method
 # Distance cutoffs are stage-1 defaults and should be tuned on validation data.
 # Typical use: first-shell around direct coordination range, second-shell larger.
 DEFAULT_FIRST_SHELL_CUTOFF = 3.0
-DEFAULT_SECOND_SHELL_CUTOFF = 4.0
+DEFAULT_SECOND_SHELL_CUTOFF = 4.5
 DEFAULT_POCKET_RADIUS = 8.0
-DEFAULT_EDGE_RADIUS = 10.0
+DEFAULT_EDGE_RADIUS = 6.0
 # Keep these constants centralized so they are easy to sweep/tune later.
 
 # ============================================================
@@ -783,7 +783,7 @@ def pocket_to_pyg_data(
     edge_index = build_radius_graph(pos, edge_radius)
 
     # If the graph has no edges, connect nearest neighbors minimally to avoid dead graphs.
-    if edge_index.size(1) == 0 and N > 1:
+    if edge_index.size(1) == 0 and N > 1: #TODO:If that the case  preffer the code will errored imidiately and will not use this solution
         dmat = pairwise_distances(pos)
         dmat = dmat + torch.eye(N) * 1e6
         src = torch.arange(N, dtype=torch.long)
@@ -799,9 +799,9 @@ def pocket_to_pyg_data(
     fg_fg_dist = torch.tensor(fg_fg, dtype=torch.float32).unsqueeze(-1)
 
     # Keep exactly 2 raw edge distances in stage-1
-    edge_dist_raw = torch.cat([ca_ca_dist, fg_fg_dist], dim=-1)   # [E, 2]
+    edge_dist_raw = torch.cat([ca_ca_dist, fg_fg_dist], dim=-1)   # [E, 2] #TODO: Add to the pipeline overall closest atoms to each fg from the other residue.
 
-    y_metal = None if pocket.y_metal is None else torch.tensor([pocket.y_metal], dtype=torch.long)
+    y_metal = None if pocket.y_metal is None else torch.tensor([pocket.y_metal], dtype=torch.long) #TODO: what is going here. what should I add?
     y_ec = None if pocket.y_ec is None else torch.tensor([pocket.y_ec], dtype=torch.long)
 
     data = Data(
@@ -820,6 +820,7 @@ def pocket_to_pyg_data(
         zinc_pos=pocket.metal_coord.unsqueeze(0),  # stored as [1,3] for consistency
     )
 
+    # TODO: From where is the y_ come from? what is going here. what should I add?
     if y_metal is not None:
         data.y_metal = y_metal
     if y_ec is not None:
