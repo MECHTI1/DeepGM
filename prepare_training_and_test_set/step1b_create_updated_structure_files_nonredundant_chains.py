@@ -161,6 +161,51 @@ def collect_entity_to_ec_from_mmcif_dict(cif_path: Path) -> Dict[str, str]:
     return result
 
 
+def collect_entity_to_uniprot_from_mmcif_dict(cif_path: Path) -> Dict[str, str]:
+    """
+    Collect entity_id -> UniProt accession(s) from _struct_ref.
+
+    Primary mmCIF columns:
+      - _struct_ref.entity_id
+      - _struct_ref.pdbx_db_accession
+      - _struct_ref.db_name
+    """
+    mmcif_dict = MMCIF2Dict(str(cif_path))
+
+    entity_ids = mmcif_get_list(mmcif_dict, "_struct_ref.entity_id")
+    accessions = mmcif_get_list(mmcif_dict, "_struct_ref.pdbx_db_accession")
+    db_names = mmcif_get_list(mmcif_dict, "_struct_ref.db_name")
+
+    if entity_ids is None or accessions is None or len(entity_ids) != len(accessions):
+        return {}
+
+    db_name_ok = (
+        db_names is not None
+        and len(db_names) == len(entity_ids)
+    )
+
+    valid_db_names = {"UNP", "UNIPROT", "UNIPROTKB", "SWISSPROT"}
+
+    grouped: Dict[str, List[str]] = {}
+    for idx, (ent_id, acc) in enumerate(zip(entity_ids, accessions)):
+        ent_id = str(ent_id).strip()
+        acc = str(acc).strip()
+        if not ent_id or not acc or acc in {".", "?"}:
+            continue
+
+        if db_name_ok:
+            db_name = str(db_names[idx]).strip().upper()
+            if db_name not in valid_db_names:
+                continue
+
+        if ent_id not in grouped:
+            grouped[ent_id] = []
+        if acc not in grouped[ent_id]:
+            grouped[ent_id].append(acc)
+
+    return {ent_id: ",".join(accs) for ent_id, accs in grouped.items()}
+
+
 def collect_polymer_entity_ids(cif_path: Path) -> Set[str]:
     """
     Return entity IDs that are polymer entities.
@@ -220,6 +265,7 @@ def prepend_comments_to_mmcif(
     chosen_polymer_by_entity: Dict[str, str],
     entity_to_description: Dict[str, str],
     entity_to_ec: Dict[str, str],
+    entity_to_uniprot: Dict[str, str],
 ) -> None:
     """
     Prepend safe mmCIF comment lines beginning with '#'.
@@ -233,8 +279,9 @@ def prepend_comments_to_mmcif(
         chain_id = chosen_polymer_by_entity[entity_id]
         desc = entity_to_description.get(entity_id, "NOT_AVAILABLE")
         ec = entity_to_ec.get(entity_id, "NOT_AVAILABLE")
+        uniprot = entity_to_uniprot.get(entity_id, "NOT_AVAILABLE")
         header_lines.append(
-            f"# MOL_ID: {entity_id}; MOLECULE: {desc}; CHAIN: {chain_id}; EC: {ec};"
+            f"# MOL_ID: {entity_id}; MOLECULE: {desc}; CHAIN: {chain_id}; EC: {ec}; UNIPROT: {uniprot};"
         )
     header_lines.append("# NOTE: same-chain hetero residues, ions, ligands, and waters were retained.")
     header_lines.append("")
@@ -331,6 +378,7 @@ def build_pdb_compnd_block(
     chosen_polymer_by_entity: Dict[str, str],
     entity_to_description: Dict[str, str],
     entity_to_ec: Dict[str, str],
+    entity_to_uniprot: Dict[str, str],
 ) -> List[str]:
     """
     Build a clean COMPND block for the reduced PDB.
@@ -343,6 +391,7 @@ def build_pdb_compnd_block(
         chain_id = chosen_polymer_by_entity[entity_id]
         desc = entity_to_description.get(entity_id, "NOT_AVAILABLE")
         ec = entity_to_ec.get(entity_id)
+        uniprot = entity_to_uniprot.get(entity_id)
 
         block_fields = [
             ("MOL_ID", entity_id),
@@ -351,6 +400,8 @@ def build_pdb_compnd_block(
         ]
         if ec:
             block_fields.append(("EC", ec))
+        if uniprot:
+            block_fields.append(("UNIPROT", uniprot))
 
         for key, value in block_fields:
             new_lines = wrap_compnd_field(serial_num, key, value)
@@ -367,6 +418,7 @@ def save_filtered_pdb_preserve_serials(
     chosen_polymer_by_entity: Dict[str, str],
     entity_to_description: Dict[str, str],
     entity_to_ec: Dict[str, str],
+    entity_to_uniprot: Dict[str, str],
 ) -> None:
     """
     Custom PDB writer:
@@ -384,6 +436,7 @@ def save_filtered_pdb_preserve_serials(
             chosen_polymer_by_entity=chosen_polymer_by_entity,
             entity_to_description=entity_to_description,
             entity_to_ec=entity_to_ec,
+            entity_to_uniprot=entity_to_uniprot,
         ))
         fh.write("REMARK Filtered to first chain per polymer entity\n")
         fh.write("REMARK Same-chain hetero residues, ions, ligands, and waters were retained\n")
@@ -470,6 +523,7 @@ def process_one_file(cif_path: Path, out_cif_dir: Path, out_pdb_dir: Path) -> Tu
     entity_to_chains = collect_entity_to_chains_from_mmcif_dict(cif_path)
     entity_to_description = collect_entity_to_description_from_mmcif_dict(cif_path)
     entity_to_ec = collect_entity_to_ec_from_mmcif_dict(cif_path)
+    entity_to_uniprot = collect_entity_to_uniprot_from_mmcif_dict(cif_path)
     polymer_entity_ids = collect_polymer_entity_ids(cif_path)
 
     chosen_by_entity = choose_first_chain_per_entity(entity_to_chains)
@@ -503,6 +557,7 @@ def process_one_file(cif_path: Path, out_cif_dir: Path, out_pdb_dir: Path) -> Tu
         chosen_polymer_by_entity=chosen_polymer_by_entity,
         entity_to_description=entity_to_description,
         entity_to_ec=entity_to_ec,
+        entity_to_uniprot=entity_to_uniprot,
     )
 
     save_filtered_pdb_preserve_serials(
@@ -512,6 +567,7 @@ def process_one_file(cif_path: Path, out_cif_dir: Path, out_pdb_dir: Path) -> Tu
         chosen_polymer_by_entity=chosen_polymer_by_entity,
         entity_to_description=entity_to_description,
         entity_to_ec=entity_to_ec,
+        entity_to_uniprot=entity_to_uniprot,
     )
 
     log(f"Processed: {cif_path.name}")
@@ -520,6 +576,7 @@ def process_one_file(cif_path: Path, out_cif_dir: Path, out_pdb_dir: Path) -> Tu
     log(f"  Entity -> chains: {entity_to_chains}")
     log(f"  Entity -> description: {entity_to_description}")
     log(f"  Entity -> EC: {entity_to_ec}")
+    log(f"  Entity -> UniProt: {entity_to_uniprot}")
     log(f"  Kept chains: {sorted(chains_to_keep)}")
     log(f"  Saved mmCIF: {out_cif}")
     log(f"  Saved PDB:   {out_pdb}")

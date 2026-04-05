@@ -3,6 +3,7 @@
 # TODO: One caution about angles
 # TODO: The two-task loss is too simplistic.  currently do: loss = CE(metal) + CE(ec) -> FIX
 # TODO: Need to download EC number of enzymes
+# TODO: There is vector edge features and scalar edge features
 # For all external features, like omega, normalize it (by using z-score).
 
 """
@@ -135,7 +136,7 @@ NODE_FEATURES_CURRENTLY_HANDLED = [
     "is_second_shell",
     # x_dist_raw
     # "ca_to_metal",
-    "fg_to_metal",
+    #"fg_to_metal",
     # "min_donor_to_metal",
     # "second_min_donor_to_metal",
     # x_misc
@@ -156,10 +157,10 @@ NODE_FEATURES_CURRENTLY_HANDLED = [
     # "fa_atr",
     # "fa_rep",
     # x_vec
-    "v_fg_to_ca", #fg is functionla group
-    "v_net_ligand",
-    "v_res_to_metal",
-    "cos_theta_bewteen_vnetligand_to_vrestometal",
+    "v_ca_to_fg", # a vector feature , can create function which does similiar from cb?
+    "v_net_ligand_to_metal", # similiar to all residues, dont think will do as vector feature
+    "v_res_to_metal", # need to decide which point of the residue (think centroid or fg). think will both use to calculate "cos_theta_bewteen_vnetligand_to_vrestometal" and also as feature vector? because like htis can cath more than angle data...
+    "cos_theta_bewteen_vnetligand_to_vrestometal", # calculated from dot product divided by norm- of v_net_ligand_to_metal and v_net_ligand_to_metal.
 ]
 
 # Recommended first-pass grouping for the structural branch.
@@ -182,7 +183,7 @@ NODE_FEATURE_GROUPS_RECOMMENDED = {
         # "ca_to_metal",
         "fg_to_metal",
         # "min_donor_to_metal",
-        "second_min_donor_to_metal",
+        # "second_min_donor_to_metal",
     ],
     "burial_exposure": [
         "SASA",
@@ -250,11 +251,10 @@ NODE_FEATURES_RECOMMENDED_KEEP_FIRST = [
 EDGE_FEATURES_RECOMMENDED_RING = [
     "ring_contact_type_one_hot",
     "contact_distance",
-    "sequence_separation",
-    "same_chain_flag",
+     "sequence_separation" # think to omit
 ]
 
-HBOND_NODE_SUMMARIES_OPTIONAL_WITH_RING = [
+HBOND_SUMMARIES_OPTIONAL_WITH_RING = [
     "hbond_sr_bb",
     "hbond_lr_bb",
     "hbond_bb_sc",
@@ -467,21 +467,15 @@ def residue_record_from_biopython_residue(residue) -> Optional[ResidueRecord]:
         return None
 
     atoms = {}
-    plddt_values = []
 
     for atom in residue.get_atoms():
         name = atom.get_name().strip()
         coord = torch.tensor(atom.coord, dtype=torch.float32)
         atoms[name] = coord
-        try:
-            plddt_values.append(float(atom.bfactor))
-        except Exception:
-            pass
 
     if "CA" not in atoms:
         return None
 
-    mean_plddt = float(sum(plddt_values) / max(1, len(plddt_values))) if plddt_values else 100.0
     parent_chain = residue.get_parent().id
 
     return ResidueRecord(
@@ -490,7 +484,6 @@ def residue_record_from_biopython_residue(residue) -> Optional[ResidueRecord]:
         icode=str(icode).strip() if str(icode).strip() else "",
         resname=residue.resname.strip(),
         atoms=atoms,
-        plddt=mean_plddt,
     )
 
 
@@ -756,7 +749,7 @@ def residue_to_stage1_node_features(rr: ResidueRecord, metal_coord: Tensor, esm_
         dim=-1,
     )
 
-    x_vec = torch.stack([(fg - ca).float(), v_net, v_res], dim=0)
+    x_vec = torch.stack([(fg - ca).float(), v_res], dim=0)
 
     return {
         "x_esm": rr.esm_embedding.float(),
@@ -904,7 +897,7 @@ class NodeScalarEncoder(nn.Module):
       - x_reschem  [N, 30]
       - x_role     [N, 2]
       - x_dist_raw [N, 4]
-      - x_misc     [N, 4] (plddt, ||v_net||, ||v_res||, cos(theta))
+      - x_misc     [N, 4] (v_net||, ||v_res||, cos(theta))
       - x_env      [N, 14]
 
     Distances are RBF-expanded internally.
@@ -1098,7 +1091,7 @@ class GVPPocketClassifier(nn.Module):
             out_dim=edge_hidden,
         )
 
-        # x_vec channels: [fg-ca, v_net, v_res]
+        # x_vec channels: [fg-ca, v_res]
         self.init_vec_proj = nn.Linear(3, hidden_v, bias=False)
 
         self.layers = nn.ModuleList([

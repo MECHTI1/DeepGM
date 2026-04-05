@@ -5,7 +5,7 @@ set -euo pipefail
 
 job_root="/media/Data/pinmymetal_sets/mahomes/train_set"
 
-pdb_dir="/media/Data/pinmymetal_sets/train/pdb_updated"
+pdb_dir="/media/Data/pinmymetal_sets/train/pdb_updatedv2"
 
 N_JOBS=4
 MAHOMES_DIR="/home/mechti/MAHOMES-II"
