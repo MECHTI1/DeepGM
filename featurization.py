@@ -191,12 +191,67 @@ def build_external_feature_groups(rr: ResidueRecord) -> Dict[str, Tensor]:
     }
 
 
+class MultinuclearSiteHandler:
+    @staticmethod
+    def metal_coords_for_pocket(pocket: PocketRecord) -> Tensor:
+        metal_coords = pocket.resolved_metal_coords()
+        return torch.stack([coord.float() for coord in metal_coords], dim=0)
+
+    @staticmethod
+    def nearest_metal_for_points(points: Tensor, metal_coords: Tensor) -> Tuple[Tensor, Tensor]:
+        diff = points[:, None, :] - metal_coords[None, :, :]
+        dists = safe_norm(diff, dim=-1)
+        min_dists, metal_idx = torch.min(dists, dim=1)
+        nearest = metal_coords[metal_idx]
+        return nearest, min_dists
+
+    @staticmethod
+    def nearest_metal_for_point(point: Tensor, metal_coords: Tensor) -> Tuple[Tensor, float]:
+        nearest, min_dists = MultinuclearSiteHandler.nearest_metal_for_points(
+            point.unsqueeze(0),
+            metal_coords,
+        )
+        return nearest[0], float(min_dists[0].item())
+
+    @staticmethod
+    def min_distance_to_metals(coords: Tensor, metal_coords: Tensor, mask: Optional[Tensor] = None) -> float:
+        if coords.numel() == 0:
+            return 999.0
+        if mask is not None:
+            coords = coords[mask]
+        if coords.numel() == 0:
+            return 999.0
+        _, min_dists = MultinuclearSiteHandler.nearest_metal_for_points(coords, metal_coords)
+        return float(min_dists.min().item())
+
+    @staticmethod
+    def site_metal_stats(pocket: PocketRecord) -> Tensor:
+        metal_coords = MultinuclearSiteHandler.metal_coords_for_pocket(pocket)
+        metal_count = float(metal_coords.size(0))
+        is_multinuclear = float(metal_count > 1.0)
+
+        if metal_coords.size(0) <= 1:
+            min_dist = 0.0
+            mean_dist = 0.0
+        else:
+            dmat = pairwise_distances(metal_coords)
+            mask = torch.triu(torch.ones_like(dmat, dtype=torch.bool), diagonal=1)
+            pair_dists = dmat[mask]
+            min_dist = float(pair_dists.min().item())
+            mean_dist = float(pair_dists.mean().item())
+
+        return torch.tensor(
+            [is_multinuclear, metal_count, min_dist, mean_dist],
+            dtype=torch.float32,
+        )
+
+
 def compute_net_ligand_vector(
     pocket: PocketRecord,
     ligand_cutoff: float = DEFAULT_FIRST_SHELL_CUTOFF,
     max_donors_per_residue: int = 2,
 ) -> Tensor:
-    metal = pocket.metal_coord.float()
+    metal_coords = MultinuclearSiteHandler.metal_coords_for_pocket(pocket)
     v_net = torch.zeros(3, dtype=torch.float32)
 
     for rr in pocket.residues:
@@ -205,30 +260,31 @@ def compute_net_ligand_vector(
             continue
 
         coords = donor_coords[donor_mask]
-        d = safe_norm(coords - metal.unsqueeze(0), dim=-1)
-        keep = d <= ligand_cutoff
+        nearest_metals, min_dists = MultinuclearSiteHandler.nearest_metal_for_points(coords, metal_coords)
+        keep = min_dists <= ligand_cutoff
         if keep.any():
-            v_net = v_net + (coords[keep] - metal.unsqueeze(0)).sum(dim=0)
+            v_net = v_net + (coords[keep] - nearest_metals[keep]).sum(dim=0)
 
     return v_net
 
 
 def residue_to_stage1_node_features(
     rr: ResidueRecord,
-    metal_coord: Tensor,
+    pocket: PocketRecord,
     esm_dim: int,
     v_net: Tensor,
 ) -> Dict[str, Tensor]:
     if rr.esm_embedding is None:
         rr.esm_embedding = torch.zeros(esm_dim, dtype=torch.float32)
 
+    metal_coords = MultinuclearSiteHandler.metal_coords_for_pocket(pocket)
     ca = rr.ca()
     fg = functional_group_centroid(rr)
     donor_coords, donor_mask = donor_coords_and_mask(rr, max_donors=2)
 
-    ca_to_metal = float(safe_norm(ca - metal_coord, dim=-1).item())
-    fg_to_metal = float(safe_norm(fg - metal_coord, dim=-1).item())
-    min_donor_to_metal = min_distance_to_point(donor_coords, metal_coord, donor_mask)
+    nearest_metal_to_ca, ca_to_metal = MultinuclearSiteHandler.nearest_metal_for_point(ca.float(), metal_coords)
+    _, fg_to_metal = MultinuclearSiteHandler.nearest_metal_for_point(fg.float(), metal_coords)
+    min_donor_to_metal = MultinuclearSiteHandler.min_distance_to_metals(donor_coords, metal_coords, donor_mask)
 
     x_role = torch.tensor(
         [float(rr.is_first_shell), float(rr.is_second_shell)],
@@ -239,7 +295,7 @@ def residue_to_stage1_node_features(
         dtype=torch.float32,
     )
 
-    v_res = (ca - metal_coord).float()
+    v_res = (ca.float() - nearest_metal_to_ca).float()
     v_net = v_net.float()
     v_net_norm = float(safe_norm(v_net, dim=-1).item())
     v_res_norm = float(safe_norm(v_res, dim=-1).item())
@@ -266,4 +322,3 @@ def residue_to_stage1_node_features(
         "fg_centroid": fg.float(),
         "pos": ca.float(),
     }
-

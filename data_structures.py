@@ -37,9 +37,19 @@ DONOR_ATOMS_BY_RESIDUE = {
 }
 
 DEFAULT_FIRST_SHELL_CUTOFF = 3.0
-DEFAULT_SECOND_SHELL_CUTOFF = 4.5
 DEFAULT_POCKET_RADIUS = 8.0
 DEFAULT_EDGE_RADIUS = 6.0
+DEFAULT_MULTINUCLEAR_MERGE_DISTANCE = 4.5
+GENERIC_METAL_ELEMENT = "METAL"
+
+# Used only to detect generic transition-metal-centered sites in structures; the
+# true metal identity should stay out of the model inputs when metal type is a
+# prediction target.
+SUPPORTED_SITE_METAL_ELEMENTS = {
+    "SC", "TI", "V", "CR", "MN", "FE", "CO", "NI", "CU", "ZN",
+    "Y", "ZR", "NB", "MO", "TC", "RU", "RH", "PD", "AG", "CD",
+    "HF", "TA", "W", "RE", "OS", "IR", "PT", "AU", "HG",
+}
 
 NODE_FEATURES_CURRENTLY_HANDLED = [
     "aa_one_hot",
@@ -110,6 +120,7 @@ NORMALIZABLE_FEATURE_NAMES = (
     "x_env_interactions",
     "edge_dist_raw",
     "edge_seqsep",
+    "site_metal_stats",
 )
 
 
@@ -145,7 +156,17 @@ class PocketRecord:
     metal_element: str
     metal_coord: Tensor
     residues: List[ResidueRecord]
+    metal_coords: List[Tensor] = field(default_factory=list)
     y_metal: Optional[int] = None
     y_ec: Optional[int] = None
+    y_multinuclear: Optional[int] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    def resolved_metal_coords(self) -> List[Tensor]:
+        return self.metal_coords if self.metal_coords else [self.metal_coord]
+
+    def metal_count(self) -> int:
+        return len(self.resolved_metal_coords())
+
+    def is_multinuclear(self) -> bool:
+        return self.metal_count() > 1

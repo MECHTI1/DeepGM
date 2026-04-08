@@ -11,6 +11,7 @@ from torch_geometric.nn import global_add_pool, global_mean_pool
 from torch_geometric.utils import softmax
 
 from data_structures import EDGE_SOURCE_TYPES, INTERACTION_SUMMARIES_OPTIONAL_WITH_RING
+from label_schemes import N_EC_CLASSES, N_METAL_CLASSES
 
 
 class RBFExpansion(nn.Module):
@@ -225,8 +226,8 @@ class GVPPocketClassifier(nn.Module):
         hidden_v: int = 16,
         edge_hidden: int = 64,
         n_layers: int = 4,
-        n_metal: int = 8,
-        n_ec: int = 7,
+        n_metal: int = N_METAL_CLASSES,
+        n_ec: int = N_EC_CLASSES,
         esm_fusion_dim: int = 128,
         metal_loss_weight: float = 1.0,
         ec_loss_weight: float = 1.0,
@@ -234,6 +235,9 @@ class GVPPocketClassifier(nn.Module):
         ec_class_weights: Optional[Tensor] = None,
     ):
         super().__init__()
+        # Current supervised targets:
+        # - EC head: first EC digit only, mapped from EC 1..7 to class ids 0..6.
+        # - Metal head: 4 classes -> Zn, Cu, Mn, and a merged Co/Fe/Ni class.
 
         self.node_scalar_encoder = NodeScalarEncoder(n_rbf=16, out_dim=hidden_s)
         self.esm_graph_encoder = ESMGraphEncoder(esm_dim=esm_dim, proj_dim=esm_fusion_dim, dropout=0.1)
@@ -257,11 +261,16 @@ class GVPPocketClassifier(nn.Module):
             nn.LayerNorm(hidden_s),
             nn.SiLU(),
         )
+        self.site_feature_encoder = nn.Sequential(
+            nn.Linear(4, 32),
+            nn.LayerNorm(32),
+            nn.SiLU(),
+        )
         self.fusion_gate = nn.Sequential(
             nn.Linear(2 * hidden_s, hidden_s),
             nn.Sigmoid(),
         )
-        fused_dim = 2 * hidden_s
+        fused_dim = 2 * hidden_s + 32
 
         self.head_metal = nn.Sequential(
             nn.Linear(fused_dim, hidden_s),
@@ -332,8 +341,14 @@ class GVPPocketClassifier(nn.Module):
         esm_graph_embed = self.esm_graph_encoder(data.x_esm, data.batch)
         gvp_fused = self.gvp_fusion_proj(gvp_graph_embed)
         esm_fused = self.esm_fusion_proj(esm_graph_embed)
+        if hasattr(data, "site_metal_stats"):
+            site_stats = data.site_metal_stats.float()
+        else:
+            batch_size = int(data.batch.max().item()) + 1
+            site_stats = torch.zeros(batch_size, 4, dtype=torch.float32, device=gvp_fused.device)
+        site_fused = self.site_feature_encoder(site_stats)
         fusion_gate = self.fusion_gate(torch.cat([gvp_fused, esm_fused], dim=-1))
-        pocket_embed = torch.cat([gvp_fused, fusion_gate * esm_fused], dim=-1)
+        pocket_embed = torch.cat([gvp_fused, fusion_gate * esm_fused, site_fused], dim=-1)
 
         logits_metal = self.head_metal(pocket_embed)
         logits_ec = self.head_ec(pocket_embed)
@@ -348,6 +363,8 @@ class GVPPocketClassifier(nn.Module):
         }
 
         if hasattr(data, "y_metal") and hasattr(data, "y_ec"):
+            # TODO- HERE I need to add the final loss policy after seeing real-data results:
+            # keep weighted CE as-is, or change task weighting / loss design based on baseline validation.
             metal_weights = self.metal_class_weights if self.metal_class_weights.numel() > 0 else None
             ec_weights = self.ec_class_weights if self.ec_class_weights.numel() > 0 else None
             loss = (
@@ -357,4 +374,3 @@ class GVPPocketClassifier(nn.Module):
             outputs["loss"] = loss
 
         return outputs
-

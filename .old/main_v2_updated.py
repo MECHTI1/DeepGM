@@ -111,7 +111,6 @@ DONOR_ATOMS_BY_RESIDUE = {
 }
 
 DEFAULT_FIRST_SHELL_CUTOFF = 3.0
-DEFAULT_SECOND_SHELL_CUTOFF = 4.5
 DEFAULT_POCKET_RADIUS = 8.0
 DEFAULT_EDGE_RADIUS = 6.0
 
@@ -585,7 +584,7 @@ def attach_external_residue_features(
 def annotate_shell_roles(
     pocket: PocketRecord,
     first_shell_cutoff: float = DEFAULT_FIRST_SHELL_CUTOFF,
-    second_shell_cutoff: float = DEFAULT_SECOND_SHELL_CUTOFF,
+    second_shell_cutoff: float = 4.5,
 ) -> None:
     metal = pocket.metal_coord.float()
 

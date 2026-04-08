@@ -14,7 +14,7 @@ Two projects-
 
 
 
-
+lOOK AT all CHATGPT TALK - "Modern BLUUES Alternatives"
 
 
 

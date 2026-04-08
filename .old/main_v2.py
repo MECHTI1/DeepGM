@@ -127,7 +127,6 @@ DONOR_ATOMS_BY_RESIDUE = {
 # Distance cutoffs are stage-1 defaults and should be tuned on validation data.
 # Typical use: first-shell around direct coordination range, second-shell larger.
 DEFAULT_FIRST_SHELL_CUTOFF = 3.0
-DEFAULT_SECOND_SHELL_CUTOFF = 4.5
 DEFAULT_POCKET_RADIUS = 8.0
 DEFAULT_EDGE_RADIUS = 6.0
 # Keep these constants centralized so they are easy to sweep/tune later.
@@ -563,7 +562,7 @@ def attach_esm_embeddings(
 def annotate_shell_roles(
     pocket: PocketRecord,
     first_shell_cutoff: float = DEFAULT_FIRST_SHELL_CUTOFF,
-    second_shell_cutoff: float = DEFAULT_SECOND_SHELL_CUTOFF,
+    second_shell_cutoff: float = 4.5,
 ) -> None:
     """
     Mark residues as first-shell or second-shell.

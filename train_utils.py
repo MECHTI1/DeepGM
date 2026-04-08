@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
+from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -12,17 +13,28 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
 from data_structures import (
-    AA_ORDER,
-    BACKBONE_ATOMS,
     DEFAULT_EDGE_RADIUS,
     EDGE_SOURCE_TO_INDEX,
     NORMALIZABLE_FEATURE_NAMES,
     PocketRecord,
-    ResidueRecord,
 )
-from featurization import donor_atom_names
-from graph_construction import pocket_to_pyg_data
+from graph_construction import (
+    extract_metal_pockets_from_structure,
+    parse_structure_file,
+    pocket_to_pyg_data,
+)
+from label_schemes import (
+    EC_TOP_LEVEL_LABELS,
+    METAL_TARGET_LABELS,
+    N_EC_CLASSES,
+    N_METAL_CLASSES,
+    map_site_metal_symbols,
+)
 from model import GVPPocketClassifier
+
+
+DEFAULT_SMOKE_TEST_STRUCTURE_DIR = Path("/media/Data/pinmymetal_sets/mahomes/train_set")
+EC_TOP_LEVEL_RE = re.compile(r"__EC_(\d+)")
 
 
 @dataclass
@@ -73,6 +85,9 @@ def summarize_graph_dataset(
 ) -> List[Dict[str, Any]]:
     report: List[Dict[str, Any]] = []
     ring_idx = EDGE_SOURCE_TO_INDEX["ring"]
+    # TODO- HERE I need to add a real-data report, not only this structural summary:
+    # train/validation/test split description, leakage checks across homologs / UniProt / structure family,
+    # and dataset-level counts for pockets with usable ring edges.
 
     for pocket in pockets:
         data = pocket_to_pyg_data(pocket, esm_dim=esm_dim, edge_radius=edge_radius)
@@ -82,6 +97,8 @@ def summarize_graph_dataset(
         report.append(
             {
                 "pocket_id": pocket.pocket_id,
+                "metal_count": int(pocket.metal_count()),
+                "is_multinuclear": bool(pocket.is_multinuclear()),
                 "n_residues": int(data.pos.size(0)),
                 "n_edges": int(data.edge_index.size(1)),
                 "n_radius_edges": int((~ring_mask).sum().item()),
@@ -162,6 +179,8 @@ def balanced_class_weights_from_pockets(
     n_metal_classes: int,
     n_ec_classes: int,
 ) -> Tuple[Tensor, Tensor]:
+    # TODO- HERE I need to add the real class-distribution report for both heads
+    # and confirm these class weights from the actual training split.
     metal_labels = [int(pocket.y_metal) for pocket in pockets if pocket.y_metal is not None]
     ec_labels = [int(pocket.y_ec) for pocket in pockets if pocket.y_ec is not None]
     metal_weights = balanced_class_weights_from_labels(metal_labels, n_metal_classes)
@@ -203,127 +222,132 @@ def predict_batch(model: nn.Module, loader: DataLoader, device: str = "cpu") -> 
 
 @torch.no_grad()
 def accuracy_from_logits(logits: Tensor, y: Tensor) -> float:
+    # TODO- HERE I need to add the final evaluation metric choice for real experiments:
+    # accuracy vs macro-F1 vs balanced accuracy vs per-class recall.
     pred = logits.argmax(dim=-1)
     return float((pred == y).float().mean().item())
 
 
-def random_residue(resname: Optional[str] = None, center: Optional[Tensor] = None) -> ResidueRecord:
-    if resname is None:
-        resname = random.choice(AA_ORDER)
-    if center is None:
-        center = torch.randn(3) * 3.0
+def parse_ec_top_level_from_structure_path(path: Path) -> Optional[int]:
+    match = EC_TOP_LEVEL_RE.search(path.stem)
+    if not match:
+        return None
+    top_level = int(match.group(1))
+    if not 1 <= top_level <= 7:
+        return None
+    return top_level - 1
 
-    atoms = {
-        "CA": center + torch.randn(3) * 0.2,
-        "N": center + torch.tensor([-1.2, 0.3, 0.0]) + torch.randn(3) * 0.1,
-        "C": center + torch.tensor([1.2, -0.2, 0.0]) + torch.randn(3) * 0.1,
-        "O": center + torch.tensor([1.8, -0.5, 0.1]) + torch.randn(3) * 0.1,
-    }
 
-    for atom_name in donor_atom_names(resname):
-        atoms[atom_name] = center + torch.randn(3) * 0.6 + torch.tensor([0.5, 0.5, 0.5])
+def infer_metal_target_class_from_pocket(pocket: PocketRecord) -> Optional[int]:
+    observed_symbols = pocket.metadata.get("metal_symbols_observed")
+    if isinstance(observed_symbols, list) and observed_symbols:
+        return map_site_metal_symbols(observed_symbols)
 
-    if all(atom_name in BACKBONE_ATOMS for atom_name in atoms.keys()):
-        atoms["CB"] = center + torch.tensor([0.3, 1.1, 0.2]) + torch.randn(3) * 0.1
+    metal_element = pocket.metal_element.strip()
+    if not metal_element:
+        return None
 
-    rr = ResidueRecord(
-        chain_id="A",
-        resseq=random.randint(1, 999),
-        icode="",
-        resname=resname,
-        atoms=atoms,
+    return map_site_metal_symbols([metal_element])
+
+
+def find_structure_files(structure_dir: Path) -> List[Path]:
+    patterns = ("*.pdb", "*.cif", "*.mmcif")
+    files: List[Path] = []
+    for pattern in patterns:
+        files.extend(structure_dir.rglob(pattern))
+    return sorted(path for path in files if path.is_file())
+
+
+def load_smoke_test_pockets_from_dir(
+    structure_dir: Path,
+    max_cases: int = 4,
+    require_full_labels: bool = True,
+) -> List[PocketRecord]:
+    structure_files = find_structure_files(structure_dir)
+    if not structure_files:
+        raise FileNotFoundError(f"No structure files found under {structure_dir}")
+
+    pockets: List[PocketRecord] = []
+    for structure_path in structure_files:
+        structure = parse_structure_file(str(structure_path), structure_id=structure_path.stem)
+        extracted = extract_metal_pockets_from_structure(structure, structure_id=structure_path.stem)
+        if not extracted:
+            continue
+
+        ec_label = parse_ec_top_level_from_structure_path(structure_path)
+
+        for pocket in extracted:
+            pocket.metadata["source_path"] = str(structure_path)
+            pocket.y_metal = infer_metal_target_class_from_pocket(pocket)
+            if ec_label is not None:
+                pocket.y_ec = ec_label
+            if require_full_labels and (pocket.y_metal is None or pocket.y_ec is None):
+                continue
+            pockets.append(pocket)
+            if len(pockets) >= max_cases:
+                return pockets
+
+    if not pockets:
+        if require_full_labels:
+            raise ValueError(
+                f"No fully labeled metal-centered pockets were extracted from {structure_dir}"
+            )
+        raise ValueError(f"No metal-centered pockets were extracted from {structure_dir}")
+    return pockets
+
+
+def run_smoke_test(
+    structure_dir: str | Path = DEFAULT_SMOKE_TEST_STRUCTURE_DIR,
+    device: str = "cpu",
+    esm_dim: int = 256,
+    edge_radius: float = 10.0,
+    max_cases: int = 4,
+    batch_size: int = 2,
+) -> None:
+    structure_dir = Path(structure_dir)
+    pockets = load_smoke_test_pockets_from_dir(
+        structure_dir,
+        max_cases=max_cases,
+        require_full_labels=True,
     )
-    rr.external_features = {
-        "SASA": random.uniform(0.0, 100.0),
-        "BSA": random.uniform(0.0, 100.0),
-        "SolvEnergy": random.uniform(-5.0, 5.0),
-        "fa_sol": random.uniform(-3.0, 3.0),
-        "fa_elec": random.uniform(-3.0, 3.0),
-        "pKa_shift": random.uniform(-4.0, 4.0),
-        "dpKa_desolv": random.uniform(-4.0, 4.0),
-        "dpKa_bg": random.uniform(-4.0, 4.0),
-        "dpKa_titr": random.uniform(-4.0, 4.0),
-        "omega": random.uniform(-2.0, 2.0),
-        "rama_prepro": random.uniform(-2.0, 2.0),
-        "fa_dun": random.uniform(-2.0, 2.0),
-        "fa_atr": random.uniform(-3.0, 0.0),
-        "fa_rep": random.uniform(0.0, 3.0),
-    }
-    return rr
 
-
-def synthetic_pocket(
-    pocket_id: str,
-    n_residues: int,
-    esm_dim: int,
-    n_metal_classes: int = 8,
-    n_ec_classes: int = 7,
-) -> PocketRecord:
-    metal = torch.zeros(3, dtype=torch.float32)
-
-    residues = []
-    for _ in range(n_residues):
-        center = torch.randn(3) * 3.0
-        rr = random_residue(center=center)
-        rr.esm_embedding = torch.randn(esm_dim)
-        residues.append(rr)
-
-    return PocketRecord(
-        structure_id="synthetic",
-        pocket_id=pocket_id,
-        metal_element="ZN",
-        metal_coord=metal,
-        residues=residues,
-        y_metal=random.randint(0, n_metal_classes - 1),
-        y_ec=random.randint(0, n_ec_classes - 1),
-    )
-
-
-def run_smoke_test(device: str = "cpu") -> None:
-    torch.manual_seed(0)
-    random.seed(0)
-
-    esm_dim = 256
-    pockets = [
-        synthetic_pocket("p0", n_residues=14, esm_dim=esm_dim),
-        synthetic_pocket("p1", n_residues=18, esm_dim=esm_dim),
-        synthetic_pocket("p2", n_residues=11, esm_dim=esm_dim),
-        synthetic_pocket("p3", n_residues=20, esm_dim=esm_dim),
-    ]
-
-    graph_summary = summarize_graph_dataset(pockets, esm_dim=esm_dim, edge_radius=10.0)
+    graph_summary = summarize_graph_dataset(pockets, esm_dim=esm_dim, edge_radius=edge_radius)
     normalization_stats = PocketGraphDataset.fit_normalization_stats(
         pockets,
         esm_dim=esm_dim,
-        edge_radius=10.0,
+        edge_radius=edge_radius,
         clamp_value=5.0,
-    )
-    metal_class_weights, ec_class_weights = balanced_class_weights_from_pockets(
-        pockets,
-        n_metal_classes=8,
-        n_ec_classes=7,
     )
 
     dataset = PocketGraphDataset(
         pockets,
         esm_dim=esm_dim,
-        edge_radius=10.0,
+        edge_radius=edge_radius,
         normalization_stats=normalization_stats,
     )
-    loader = DataLoader(dataset, batch_size=2, shuffle=True)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+    all_have_supervision = all(pocket.y_metal is not None and pocket.y_ec is not None for pocket in pockets)
+    metal_class_weights = None
+    ec_class_weights = None
+    if all_have_supervision:
+        metal_class_weights, ec_class_weights = balanced_class_weights_from_pockets(
+            pockets,
+            n_metal_classes=N_METAL_CLASSES,
+            n_ec_classes=N_EC_CLASSES,
+        )
 
     model = GVPPocketClassifier(
         esm_dim=esm_dim,
-        hidden_s=128,
-        hidden_v=16,
-        edge_hidden=64,
-        n_layers=4,
-        n_metal=8,
-        n_ec=7,
-        esm_fusion_dim=128,
         metal_class_weights=metal_class_weights,
         ec_class_weights=ec_class_weights,
     ).to(device)
+
+    print(f"Smoke-test structure dir: {structure_dir}")
+    print(f"EC top-level labels: {EC_TOP_LEVEL_LABELS}")
+    print(f"Metal target labels: {METAL_TARGET_LABELS}")
+    print("Metal targets are inferred per pocket from parsed structure metal symbols.")
+    print("Smoke-test pockets:", [pocket.pocket_id for pocket in pockets])
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-4)
     loss = train_epoch(model, loader, optimizer, device=device)
@@ -333,7 +357,8 @@ def run_smoke_test(device: str = "cpu") -> None:
     print("Graph summary sample:", graph_summary[0])
     print("Metal logits shape:", tuple(result["metal_logits"].shape))
     print("EC logits shape:", tuple(result["ec_logits"].shape))
-    print("Metal acc (random synthetic):", accuracy_from_logits(result["metal_logits"], result["metal_y"]))
-    print("EC acc (random synthetic):", accuracy_from_logits(result["ec_logits"], result["ec_y"]))
+    if all_have_supervision and "metal_y" in result:
+        print("Metal acc:", accuracy_from_logits(result["metal_logits"], result["metal_y"]))
+    if all_have_supervision and "ec_y" in result:
+        print("EC acc:", accuracy_from_logits(result["ec_logits"], result["ec_y"]))
     print("Smoke test completed successfully.")
-

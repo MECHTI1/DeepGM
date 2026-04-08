@@ -62,10 +62,10 @@ for part_file in "$job_root"/batch_input_part_*; do
         missing=0
         skipped_copy=0
 
-        # IFS + trimming CR/spaces/tabs on each ID line
+        # IFS + trimming only trailing whitespace/CR on each ID line while
+        # preserving internal spaces that are part of the structure name.
         while IFS= read -r struct_id_raw; do
-            # Trim trailing \r, spaces, and tabs
-            struct_id="${struct_id_raw%%[$'\r\t ']*}"
+            struct_id="$(printf '%s' "$struct_id_raw" | sed 's/[[:space:]]*$//')"
 
             [[ -z "$struct_id" ]] && continue
 
