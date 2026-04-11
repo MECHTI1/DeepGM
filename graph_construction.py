@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -36,6 +37,17 @@ from featurization import (
     safe_norm,
     one_hot_index,
 )
+from project_paths import get_default_embeddings_dir
+
+
+DEFAULT_RING_OUTPUT_DIR = get_default_embeddings_dir()
+
+
+@dataclass(frozen=True)
+class MetalAtomRecord:
+    coord: Tensor
+    symbol: str
+    site_id: Tuple[str, int, str]
 
 
 def parse_structure_file(filepath: str, structure_id: Optional[str] = None):
@@ -90,21 +102,61 @@ def canonicalize_site_metal_resname(resname: str) -> Optional[str]:
     return None
 
 
-def is_supported_site_metal_residue(residue) -> bool:
-    return canonicalize_site_metal_resname(residue.resname) is not None
+def biopython_residue_site_id(residue, chain_id: str) -> Tuple[str, int, str]:
+    _, resseq, icode = residue.id
+    normalized_icode = str(icode).strip() if str(icode).strip() else ""
+    return str(chain_id), int(resseq), normalized_icode
+
+
+def metal_records_from_biopython_residue(residue, chain_id: str) -> List[MetalAtomRecord]:
+    metal_symbol = canonicalize_site_metal_resname(residue.resname)
+    if metal_symbol is None:
+        return []
+
+    site_id = biopython_residue_site_id(residue, chain_id)
+    # Metal coordinates come straight from the parsed BioPython atoms in the site residue.
+    return [
+        MetalAtomRecord(
+            coord=torch.tensor(atom.coord, dtype=torch.float32),
+            symbol=metal_symbol,
+            site_id=site_id,
+        )
+        for atom in residue.get_atoms()
+    ]
+
+
+def collect_structure_residues_and_metals(
+    structure,
+) -> Tuple[List[ResidueRecord], List[MetalAtomRecord]]:
+    all_residues: List[ResidueRecord] = []
+    metal_records: List[MetalAtomRecord] = []
+
+    for model in structure:
+        for chain in model:
+            for residue in chain:
+                residue_metal_records = metal_records_from_biopython_residue(residue, chain.id)
+                if residue_metal_records:
+                    metal_records.extend(residue_metal_records)
+                    continue
+
+                residue_record = residue_record_from_biopython_residue(residue)
+                if residue_record is not None:
+                    all_residues.append(residue_record)
+
+    return all_residues, metal_records
 
 
 def cluster_metal_records(
-    metal_records: List[Dict[str, Any]],
+    metal_records: List[MetalAtomRecord],
     merge_distance: float,
-) -> List[List[Dict[str, Any]]]:
+) -> List[List[MetalAtomRecord]]:
     if not metal_records:
         return []
 
-    coords = torch.stack([record["coord"].float() for record in metal_records], dim=0)
+    coords = torch.stack([record.coord.float() for record in metal_records], dim=0)
     dmat = pairwise_distances(coords)
 
-    clusters: List[List[Dict[str, Any]]] = []
+    clusters: List[List[MetalAtomRecord]] = []
     visited = set()
     for start_idx in range(len(metal_records)):
         if start_idx in visited:
@@ -126,6 +178,52 @@ def cluster_metal_records(
         clusters.append(component)
 
     return clusters
+
+
+def find_pocket_residues_near_metal_cluster(
+    all_residues: List[ResidueRecord],
+    metal_cluster: List[MetalAtomRecord],
+    pocket_radius: float,
+) -> List[ResidueRecord]:
+    cluster_tensor = torch.stack([record.coord.float() for record in metal_cluster], dim=0)
+    pocket_residues = []
+    for residue_record in all_residues:
+        residue_coords = torch.stack(list(residue_record.atoms.values()), dim=0)
+        diff = residue_coords[:, None, :] - cluster_tensor[None, :, :]
+        min_d = safe_norm(diff, dim=-1).min().item()
+        if min_d <= pocket_radius:
+            pocket_residues.append(residue_record)
+    return pocket_residues
+
+
+def pocket_record_from_metal_cluster(
+    structure_id: str,
+    cluster_index: int,
+    metal_cluster: List[MetalAtomRecord],
+    all_residues: List[ResidueRecord],
+    pocket_radius: float,
+) -> Optional[PocketRecord]:
+    pocket_residues = find_pocket_residues_near_metal_cluster(
+        all_residues,
+        metal_cluster,
+        pocket_radius=pocket_radius,
+    )
+    if not pocket_residues:
+        return None
+
+    cluster_coords = [record.coord.float() for record in metal_cluster]
+    cluster_symbols = sorted({record.symbol for record in metal_cluster})
+    return PocketRecord(
+        structure_id=structure_id,
+        pocket_id=f"{structure_id}_METAL_{cluster_index}",
+        metal_element=cluster_symbols[0] if len(cluster_symbols) == 1 else GENERIC_METAL_ELEMENT,
+        metal_coords=cluster_coords,
+        residues=pocket_residues,
+        metadata={
+            "metal_symbols_observed": cluster_symbols,
+            "metal_site_ids": [record.site_id for record in metal_cluster],
+        },
+    )
 
 
 def parse_ring_node_id(node_id: str) -> Tuple[str, int, str, str]:
@@ -168,32 +266,59 @@ def resolve_ring_endpoint_coord(residue: ResidueRecord, atom_or_coord: str) -> O
     return None
 
 
-def resolve_ring_edges_path(pocket: PocketRecord) -> Optional[Path]:
+def canonical_ring_edges_output_path(structure_path: str | Path) -> Path:
+    structure_path = Path(structure_path)
+    return DEFAULT_RING_OUTPUT_DIR / structure_path.stem / f"{structure_path.name}_ringEdges"
+
+
+def ring_edges_path_candidates(
+    structure_id: str,
+    source_path: Optional[str] = None,
+    explicit_path: Optional[str] = None,
+    expected_path: Optional[str] = None,
+) -> List[Path]:
     candidates: List[Path] = []
-
-    explicit = pocket.metadata.get("ring_edges_path")
-    if explicit:
-        candidates.append(Path(str(explicit)))
-
-    source_path = pocket.metadata.get("source_path")
-    if source_path:
-        candidates.append(Path(f"{source_path}_ringEdges"))
-
-    structure_id = pocket.structure_id.strip()
-    if structure_id:
-        emb_dir = Path(__file__).resolve().parent / ".data" / "embeddings" / structure_id
-        candidates.append(emb_dir / f"{structure_id}.pdb_ringEdges")
-        candidates.append(emb_dir / f"{structure_id}.cif_ringEdges")
-        if emb_dir.is_dir():
-            candidates.extend(sorted(emb_dir.glob("*ringEdges")))
-
     seen = set()
-    for candidate in candidates:
-        key = str(candidate)
+
+    def add_candidate(path: Path) -> None:
+        key = str(path)
         if key in seen:
-            continue
+            return
         seen.add(key)
+        candidates.append(path)
+
+    if explicit_path:
+        add_candidate(Path(explicit_path))
+
+    if expected_path:
+        add_candidate(Path(expected_path))
+
+    if source_path:
+        source = Path(source_path)
+        add_candidate(canonical_ring_edges_output_path(source))
+        add_candidate(Path(f"{source_path}_ringEdges"))
+
+    normalized_structure_id = structure_id.strip()
+    if normalized_structure_id:
+        emb_dir = DEFAULT_RING_OUTPUT_DIR / normalized_structure_id
+        add_candidate(emb_dir / f"{normalized_structure_id}.pdb_ringEdges")
+        add_candidate(emb_dir / f"{normalized_structure_id}.cif_ringEdges")
+        if emb_dir.is_dir():
+            for candidate in sorted(emb_dir.glob("*ringEdges")):
+                add_candidate(candidate)
+
+    return candidates
+
+
+def resolve_ring_edges_path(pocket: PocketRecord) -> Optional[Path]:
+    for candidate in ring_edges_path_candidates(
+        structure_id=pocket.structure_id,
+        source_path=pocket.metadata.get("source_path"),
+        explicit_path=pocket.metadata.get("ring_edges_path"),
+        expected_path=pocket.metadata.get("ring_edges_expected_path"),
+    ):
         if candidate.is_file():
+            pocket.metadata["ring_edges_path"] = str(candidate)
             return candidate
     return None
 
@@ -205,64 +330,21 @@ def extract_metal_pockets_from_structure(
     multinuclear_merge_distance: float = DEFAULT_MULTINUCLEAR_MERGE_DISTANCE,
 ) -> List[PocketRecord]:
     sid = structure_id or getattr(structure, "id", "unknown_structure")
+    all_residues, metal_records = collect_structure_residues_and_metals(structure)
 
-    all_residues: List[ResidueRecord] = []
-    metal_records: List[Dict[str, Any]] = []
-
-    for model in structure:
-        for chain in model:
-            for residue in chain:
-                metal_symbol = canonicalize_site_metal_resname(residue.resname)
-                if metal_symbol is not None:
-                    _, resseq, icode = residue.id
-                    site_id = (str(chain.id), int(resseq), str(icode).strip() if str(icode).strip() else "")
-                    for atom in residue.get_atoms():
-                        metal_records.append(
-                            {
-                                "coord": torch.tensor(atom.coord, dtype=torch.float32),
-                                "symbol": metal_symbol,
-                                "site_id": site_id,
-                            }
-                        )
-                    continue
-
-                rr = residue_record_from_biopython_residue(residue)
-                if rr is not None:
-                    all_residues.append(rr)
-
+    # Nearby metals are merged into one clustered site; one cluster becomes one pocket.
     metal_clusters = cluster_metal_records(metal_records, merge_distance=multinuclear_merge_distance)
     pockets: List[PocketRecord] = []
     for idx, metal_cluster in enumerate(metal_clusters):
-        cluster_coords = [record["coord"].float() for record in metal_cluster]
-        cluster_symbols = sorted({record["symbol"] for record in metal_cluster})
-        cluster_tensor = torch.stack(cluster_coords, dim=0)
-        cluster_center = cluster_tensor.mean(dim=0)
-        pocket_residues = []
-        for rr in all_residues:
-            coords = torch.stack(list(rr.atoms.values()), dim=0)
-            diff = coords[:, None, :] - cluster_tensor[None, :, :]
-            min_d = safe_norm(diff, dim=-1).min().item()
-            if min_d <= pocket_radius:
-                pocket_residues.append(rr)
-
-        if pocket_residues:
-            pockets.append(
-                PocketRecord(
-                    structure_id=sid,
-                    pocket_id=f"{sid}_METAL_{idx}",
-                    metal_element=cluster_symbols[0] if len(cluster_symbols) == 1 else GENERIC_METAL_ELEMENT,
-                    metal_coord=cluster_center,
-                    metal_coords=cluster_coords,
-                    residues=pocket_residues,
-                    y_multinuclear=int(len(cluster_coords) > 1),
-                    metadata={
-                        "metal_symbols_observed": cluster_symbols,
-                        "metal_site_ids": [record["site_id"] for record in metal_cluster],
-                        "metal_count": len(cluster_coords),
-                        "is_multinuclear": bool(len(cluster_coords) > 1),
-                    },
-                )
-            )
+        pocket = pocket_record_from_metal_cluster(
+            structure_id=sid,
+            cluster_index=idx,
+            metal_cluster=metal_cluster,
+            all_residues=all_residues,
+            pocket_radius=pocket_radius,
+        )
+        if pocket is not None:
+            pockets.append(pocket)
     return pockets
 
 
@@ -305,6 +387,7 @@ def annotate_shell_roles(
     fg_centroids = []
     for rr in pocket.residues:
         donor_coords, donor_mask = donor_coords_and_mask(rr, max_donors=2)
+        # First shell is defined by donor-atom proximity to the nearest metal, not by CA distance.
         min_d = MultinuclearSiteHandler.min_distance_to_metals(donor_coords, metal_coords, donor_mask)
         rr.is_first_shell = min_d <= first_shell_cutoff
         rr.is_second_shell = False
@@ -318,6 +401,7 @@ def annotate_shell_roles(
         if len(first_shell_centroids) == 0:
             rr.is_second_shell = False
             continue
+        # Second shell is defined relative to first-shell functional-group centroids.
         dists = [safe_norm(fg - f0, dim=-1).item() for f0 in first_shell_centroids]
         rr.is_second_shell = min(dists) <= second_shell_cutoff
 
@@ -353,8 +437,10 @@ def build_pair_edge_geometry(
         raise ValueError(f"Missing CA atom for edge pair {rr_i.residue_id()} -> {rr_j.residue_id()}")
 
     if src_coord is None or dst_coord is None:
+        # For ordinary edges, use the closest atom-atom contact as the local interaction geometry.
         src_coord, dst_coord, contact_dist = closest_points_between_residues(rr_i, rr_j)
     else:
+        # RING edges can provide more specific interaction endpoints than the closest atom pair.
         src_coord = src_coord.float()
         dst_coord = dst_coord.float()
         contact_dist = float(safe_norm(dst_coord - src_coord, dim=-1).item())
@@ -386,9 +472,17 @@ def build_radius_graph_from_residues(residues: List[ResidueRecord], radius: floa
     return torch.tensor([src_list, dst_list], dtype=torch.long)
 
 
-def build_ring_interaction_edge_records(pocket: PocketRecord) -> List[Dict[str, Any]]:
+def build_ring_interaction_edge_records(
+    pocket: PocketRecord,
+    require_ring_edges: bool = False,
+) -> List[Dict[str, Any]]:
     ring_edges_path = resolve_ring_edges_path(pocket)
     if ring_edges_path is None:
+        if require_ring_edges:
+            raise FileNotFoundError(
+                f"Missing RING edge file for pocket {pocket.pocket_id}. "
+                f"Tried: {[str(path) for path in ring_edges_path_candidates(pocket.structure_id, pocket.metadata.get('source_path'), pocket.metadata.get('ring_edges_path'), pocket.metadata.get('ring_edges_expected_path'))]}"
+            )
         return []
 
     residue_to_index = {rr.residue_id(): i for i, rr in enumerate(pocket.residues)}
@@ -456,10 +550,12 @@ def pocket_to_pyg_data(
     pocket: PocketRecord,
     esm_dim: int,
     edge_radius: float = DEFAULT_EDGE_RADIUS,
+    require_ring_edges: bool = False,
 ) -> Data:
     annotate_shell_roles(pocket)
     v_net = compute_net_ligand_vector(pocket)
 
+    # Build residue-level node tensors first, then pack them into one PyG graph object.
     node_dicts = [
         residue_to_stage1_node_features(rr, pocket, esm_dim, v_net)
         for rr in pocket.residues
@@ -481,7 +577,10 @@ def pocket_to_pyg_data(
     pos = torch.stack([d["pos"] for d in node_dicts], dim=0)
 
     base_edge_index = build_radius_graph_from_residues(pocket.residues, edge_radius)
-    ring_edge_records = build_ring_interaction_edge_records(pocket)
+    ring_edge_records = build_ring_interaction_edge_records(
+        pocket,
+        require_ring_edges=require_ring_edges,
+    )
     # Keep both local-radius edges and explicit ring-interaction edges; they encode
     # different edge sources for the same local pocket.
 
@@ -557,6 +656,7 @@ def pocket_to_pyg_data(
         edge_vector_raw=edge_vector_raw,
         edge_interaction_type=edge_interaction_type,
         edge_source_type=edge_source_type,
+        # Preserve both the explicit metal positions and a single site center summary.
         metal_pos=MultinuclearSiteHandler.metal_coords_for_pocket(pocket),
         metal_center_pos=pocket.metal_coord.unsqueeze(0),
         metal_count=torch.tensor([pocket.metal_count()], dtype=torch.long),
@@ -567,8 +667,6 @@ def pocket_to_pyg_data(
         data.y_metal = y_metal
     if y_ec is not None:
         data.y_ec = y_ec
-    if pocket.y_multinuclear is not None:
-        data.y_multinuclear = torch.tensor([pocket.y_multinuclear], dtype=torch.long)
     return data
 
 
@@ -578,12 +676,11 @@ def save_pocket_metadata_json(pocket: PocketRecord, outpath: str) -> None:
         "pocket_id": pocket.pocket_id,
         "metal_element": pocket.metal_element,
         "metal_coord": pocket.metal_coord.tolist(),
-        "metal_coords": [coord.tolist() for coord in pocket.resolved_metal_coords()],
+        "metal_coords": [coord.tolist() for coord in pocket.metal_coords],
         "metal_count": pocket.metal_count(),
         "is_multinuclear": pocket.is_multinuclear(),
         "y_metal": pocket.y_metal,
         "y_ec": pocket.y_ec,
-        "y_multinuclear": pocket.y_multinuclear,
         "residues": [
             {
                 "chain_id": rr.chain_id,

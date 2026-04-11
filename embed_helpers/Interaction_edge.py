@@ -1,8 +1,17 @@
+import os
+import sys
 from pathlib import Path
 import subprocess
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from project_paths import resolve_embeddings_dir
+
+
 RING_EXE = Path("/home/mechti/ring-4.0/out/bin/ring")
-DIR_RESULTS = Path("/home/mechti/PycharmProjects/DeepGM/.data/embeddings")
+DIR_RESULTS = resolve_embeddings_dir(os.getenv("EMBEDDINGS_DIR"))
 
 
 def ring_create_results(dir_results, path_structure):

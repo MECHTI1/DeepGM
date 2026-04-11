@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+import torch
 from torch import Tensor
 
 AA_ORDER = [
@@ -36,7 +37,9 @@ DONOR_ATOMS_BY_RESIDUE = {
     "TRP": ["NE1"],
 }
 
-DEFAULT_FIRST_SHELL_CUTOFF = 3.0
+# Stricter default for direct metal coordination; broader thresholds can pull in
+# weak or merely nearby contacts rather than true first-shell binders.
+DEFAULT_FIRST_SHELL_CUTOFF = 2.7
 DEFAULT_POCKET_RADIUS = 8.0
 DEFAULT_EDGE_RADIUS = 6.0
 DEFAULT_MULTINUCLEAR_MERGE_DISTANCE = 4.5
@@ -153,20 +156,27 @@ class ResidueRecord:
 class PocketRecord:
     structure_id: str
     pocket_id: str
-    metal_element: str
-    metal_coord: Tensor
+    metal_element: str  # Single pocket-level summary; mixed-metal pockets use GENERIC_METAL_ELEMENT, while full observed symbols live in metadata["metal_symbols_observed"].
+    metal_coords: List[Tensor]  # Source of truth for metal positions; one tensor for mononuclear pockets, several for multinuclear pockets.
     residues: List[ResidueRecord]
-    metal_coords: List[Tensor] = field(default_factory=list)
     y_metal: Optional[int] = None
     y_ec: Optional[int] = None
-    y_multinuclear: Optional[int] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def resolved_metal_coords(self) -> List[Tensor]:
-        return self.metal_coords if self.metal_coords else [self.metal_coord]
+    def __post_init__(self) -> None:
+        if not self.metal_coords:
+            raise ValueError("PocketRecord requires at least one metal coordinate.")
+
+    @property
+    def metal_coord(self) -> Tensor:
+        # Expose a single representative site center for code that wants one point,
+        # while keeping metal_coords as the underlying source of truth.
+        if len(self.metal_coords) == 1:
+            return self.metal_coords[0]
+        return torch.stack([coord.float() for coord in self.metal_coords], dim=0).mean(dim=0)
 
     def metal_count(self) -> int:
-        return len(self.resolved_metal_coords())
+        return len(self.metal_coords)
 
     def is_multinuclear(self) -> bool:
         return self.metal_count() > 1

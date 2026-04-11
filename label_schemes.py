@@ -11,7 +11,7 @@ EC_TOP_LEVEL_LABELS = {
 }
 N_EC_CLASSES = len(EC_TOP_LEVEL_LABELS)
 
-# Current metal training head:
+# Metal class mapping used by the current classifier:
 # 0 -> Zn
 # 1 -> Cu
 # 2 -> Mn
@@ -21,12 +21,6 @@ METAL_TARGET_LABELS = {
     1: "Cu",
     2: "Mn",
     3: "Co/Fe/Ni",
-}
-METAL_TARGET_MEMBERS = {
-    0: ("Zn",),
-    1: ("Cu",),
-    2: ("Mn",),
-    3: ("Co", "Fe", "Ni"),
 }
 N_METAL_CLASSES = len(METAL_TARGET_LABELS)
 
@@ -38,42 +32,18 @@ METAL_SYMBOL_TO_TARGET = {
     "FE": 3,
     "NI": 3,
 }
+def map_site_metal_symbols(symbols: str | tuple[str, ...] | list[str]) -> int | None:
+    if isinstance(symbols, str):
+        symbols = (symbols,)
 
-# Raw codes from prepare_training_and_test_set/pinmymetal_files/classmodel_train_set
-# mapped into the 4-class metal target used for training.
-CLASSMODEL_METAL_CODE_TO_TARGET = {
-    7: 0,  # Zn
-    6: 1,  # Cu
-    1: 2,  # Mn
-    2: 3,  # grouped Co / Fe / Ni class
-}
-CLASSMODEL_METAL_CODE_TO_LABEL = {
-    raw_code: METAL_TARGET_LABELS[target_idx]
-    for raw_code, target_idx in CLASSMODEL_METAL_CODE_TO_TARGET.items()
-}
+    target_ids = set()
+    for symbol in symbols:
+        try:
+            target_ids.add(METAL_SYMBOL_TO_TARGET[symbol.strip().upper()])
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported site metal symbol {symbol!r}. "
+                f"Expected one of {sorted(METAL_SYMBOL_TO_TARGET)}."
+            ) from exc
 
-
-def map_classmodel_metal_code(raw_code: int) -> int:
-    if raw_code not in CLASSMODEL_METAL_CODE_TO_TARGET:
-        raise ValueError(
-            f"Unsupported classmodel metal code {raw_code}. "
-            f"Expected one of {sorted(CLASSMODEL_METAL_CODE_TO_TARGET)}."
-        )
-    return CLASSMODEL_METAL_CODE_TO_TARGET[raw_code]
-
-
-def map_site_metal_symbol(symbol: str) -> int:
-    normalized = symbol.strip().upper()
-    if normalized not in METAL_SYMBOL_TO_TARGET:
-        raise ValueError(
-            f"Unsupported site metal symbol {symbol!r}. "
-            f"Expected one of {sorted(METAL_SYMBOL_TO_TARGET)}."
-        )
-    return METAL_SYMBOL_TO_TARGET[normalized]
-
-
-def map_site_metal_symbols(symbols: tuple[str, ...] | list[str]) -> int | None:
-    target_ids = {map_site_metal_symbol(symbol) for symbol in symbols}
-    if len(target_ids) != 1:
-        return None
-    return next(iter(target_ids))
+    return next(iter(target_ids)) if len(target_ids) == 1 else None

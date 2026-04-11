@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 import torch
@@ -7,6 +8,12 @@ from esm.sdk.api import ESMProtein, LogitsConfig
 
 from Bio.PDB import PDBParser, MMCIFParser
 from Bio.Data.PDBData import protein_letters_3to1
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from project_paths import get_default_embeddings_dir, resolve_embeddings_dir
 
 
 def extract_chain_sequences(structure_file):
@@ -59,25 +66,6 @@ def clean_embedding_length(emb, sequence_length):
         )
 
     return emb
-
-
-def get_default_embeddings_dir() -> Path:
-    project_root = Path(__file__).resolve().parent.parent
-    return project_root / ".data" / "embeddings"
-
-
-def resolve_embeddings_dir(configured_dir: str | None) -> Path:
-    if configured_dir:
-        embeddings_dir = Path(configured_dir).expanduser()
-        if not embeddings_dir.is_absolute():
-            embeddings_dir = Path(__file__).resolve().parent.parent / embeddings_dir
-    else:
-        embeddings_dir = get_default_embeddings_dir()
-
-    embeddings_dir.mkdir(parents=True, exist_ok=True)
-    return embeddings_dir
-
-
 def create_resi_embed_pt(structure_file, out_dir: Path | None = None):
     structure_file = Path(structure_file)
     chain_sequences = extract_chain_sequences(structure_file)

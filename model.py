@@ -237,7 +237,7 @@ class GVPPocketClassifier(nn.Module):
         super().__init__()
         # Current supervised targets:
         # - EC head: first EC digit only, mapped from EC 1..7 to class ids 0..6.
-        # - Metal head: 4 classes -> Zn, Cu, Mn, and a merged Co/Fe/Ni class.
+        # - Metal classifier: 4 classes -> Zn, Cu, Mn, and a merged Co/Fe/Ni class.
 
         self.node_scalar_encoder = NodeScalarEncoder(n_rbf=16, out_dim=hidden_s)
         self.esm_graph_encoder = ESMGraphEncoder(esm_dim=esm_dim, proj_dim=esm_fusion_dim, dropout=0.1)
@@ -297,6 +297,8 @@ class GVPPocketClassifier(nn.Module):
         )
 
     def _init_vector_channels(self, x_vec: Tensor) -> Tensor:
+        # x_vec arrives as two explicit geometric channels per residue; project them
+        # into the hidden vector width used by the GVP layers.
         x_t = x_vec.transpose(1, 2)
         x_proj = self.init_vec_proj(x_t)
         return x_proj.transpose(1, 2)
@@ -334,10 +336,12 @@ class GVPPocketClassifier(nn.Module):
         for layer in self.layers:
             s, v = layer(s, v, data.edge_index, edge_s, edge_v)
 
+        # Structural branch: pool the residue-level GVP states into one graph embedding.
         pooled_mean = global_mean_pool(s, data.batch)
         pooled_attn = self.gvp_attn_pool(s, data.batch)
         gvp_graph_embed = torch.cat([pooled_mean, pooled_attn], dim=-1)
 
+        # Sequence branch: pool residue ESM embeddings separately, then fuse late.
         esm_graph_embed = self.esm_graph_encoder(data.x_esm, data.batch)
         gvp_fused = self.gvp_fusion_proj(gvp_graph_embed)
         esm_fused = self.esm_fusion_proj(esm_graph_embed)
@@ -347,6 +351,7 @@ class GVPPocketClassifier(nn.Module):
             batch_size = int(data.batch.max().item()) + 1
             site_stats = torch.zeros(batch_size, 4, dtype=torch.float32, device=gvp_fused.device)
         site_fused = self.site_feature_encoder(site_stats)
+        # The gate lets the model decide how much ESM information to inject per pocket.
         fusion_gate = self.fusion_gate(torch.cat([gvp_fused, esm_fused], dim=-1))
         pocket_embed = torch.cat([gvp_fused, fusion_gate * esm_fused, site_fused], dim=-1)
 

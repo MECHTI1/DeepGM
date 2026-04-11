@@ -19,6 +19,7 @@ from data_structures import (
     PocketRecord,
 )
 from graph_construction import (
+    canonical_ring_edges_output_path,
     extract_metal_pockets_from_structure,
     parse_structure_file,
     pocket_to_pyg_data,
@@ -82,6 +83,7 @@ def summarize_graph_dataset(
     pockets: List[PocketRecord],
     esm_dim: int,
     edge_radius: float = DEFAULT_EDGE_RADIUS,
+    require_ring_edges: bool = False,
 ) -> List[Dict[str, Any]]:
     report: List[Dict[str, Any]] = []
     ring_idx = EDGE_SOURCE_TO_INDEX["ring"]
@@ -90,7 +92,12 @@ def summarize_graph_dataset(
     # and dataset-level counts for pockets with usable ring edges.
 
     for pocket in pockets:
-        data = pocket_to_pyg_data(pocket, esm_dim=esm_dim, edge_radius=edge_radius)
+        data = pocket_to_pyg_data(
+            pocket,
+            esm_dim=esm_dim,
+            edge_radius=edge_radius,
+            require_ring_edges=require_ring_edges,
+        )
         edge_pairs = list(zip(data.edge_index[0].tolist(), data.edge_index[1].tolist()))
         duplicate_pairs = len(edge_pairs) - len(set(edge_pairs))
         ring_mask = data.edge_source_type[:, ring_idx] > 0.5
@@ -116,11 +123,13 @@ class PocketGraphDataset(Dataset):
         esm_dim: int,
         edge_radius: float = DEFAULT_EDGE_RADIUS,
         normalization_stats: Optional[FeatureNormalizationStats] = None,
+        require_ring_edges: bool = False,
     ):
         self.pockets = pockets
         self.esm_dim = esm_dim
         self.edge_radius = edge_radius
         self.normalization_stats = normalization_stats
+        self.require_ring_edges = require_ring_edges
 
     @classmethod
     def fit_normalization_stats(
@@ -129,9 +138,15 @@ class PocketGraphDataset(Dataset):
         esm_dim: int,
         edge_radius: float = DEFAULT_EDGE_RADIUS,
         clamp_value: float = 5.0,
+        require_ring_edges: bool = False,
     ) -> FeatureNormalizationStats:
         data_list = [
-            pocket_to_pyg_data(pocket, esm_dim=esm_dim, edge_radius=edge_radius)
+            pocket_to_pyg_data(
+                pocket,
+                esm_dim=esm_dim,
+                edge_radius=edge_radius,
+                require_ring_edges=require_ring_edges,
+            )
             for pocket in pockets
         ]
         return compute_feature_normalization_stats(data_list, clamp_value=clamp_value)
@@ -144,6 +159,7 @@ class PocketGraphDataset(Dataset):
             self.pockets[idx],
             esm_dim=self.esm_dim,
             edge_radius=self.edge_radius,
+            require_ring_edges=self.require_ring_edges,
         )
         return apply_feature_normalization(data, self.normalization_stats)
 
@@ -247,7 +263,7 @@ def infer_metal_target_class_from_pocket(pocket: PocketRecord) -> Optional[int]:
     if not metal_element:
         return None
 
-    return map_site_metal_symbols([metal_element])
+    return map_site_metal_symbols(metal_element)
 
 
 def find_structure_files(structure_dir: Path) -> List[Path]:
@@ -278,6 +294,10 @@ def load_smoke_test_pockets_from_dir(
 
         for pocket in extracted:
             pocket.metadata["source_path"] = str(structure_path)
+            pocket.metadata.setdefault(
+                "ring_edges_expected_path",
+                str(canonical_ring_edges_output_path(structure_path)),
+            )
             pocket.y_metal = infer_metal_target_class_from_pocket(pocket)
             if ec_label is not None:
                 pocket.y_ec = ec_label

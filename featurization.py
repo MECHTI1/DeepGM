@@ -20,6 +20,11 @@ from data_structures import (
     ResidueRecord,
 )
 
+BURIAL_FEATURE_NAMES = ("SASA", "BSA", "SolvEnergy", "fa_sol")
+PKA_FEATURE_NAMES = ("pKa_shift", "dpKa_desolv", "dpKa_bg", "dpKa_titr")
+CONFORMATION_FEATURE_NAMES = ("omega", "rama_prepro", "fa_dun")
+INTERACTION_FEATURE_NAMES = ("fa_elec", "fa_atr", "fa_rep")
+
 
 def safe_norm(x: Tensor, dim: int = -1, keepdim: bool = False, eps: float = 1e-8) -> Tensor:
     return torch.sqrt(torch.clamp((x * x).sum(dim=dim, keepdim=keepdim), min=eps))
@@ -148,53 +153,26 @@ def second_min_distance_to_point(coords: Tensor, point: Tensor, mask: Optional[T
     return float(vals[1].item())
 
 
+def build_external_feature_vector(rr: ResidueRecord, feature_names: Tuple[str, ...]) -> Tensor:
+    return torch.tensor(
+        [rr.get_external_feature(name, 0.0) for name in feature_names],
+        dtype=torch.float32,
+    )
+
+
 def build_external_feature_groups(rr: ResidueRecord) -> Dict[str, Tensor]:
-    burial = torch.tensor(
-        [
-            rr.get_external_feature("SASA", 0.0),
-            rr.get_external_feature("BSA", 0.0),
-            rr.get_external_feature("SolvEnergy", 0.0),
-            rr.get_external_feature("fa_sol", 0.0),
-        ],
-        dtype=torch.float32,
-    )
-    pka = torch.tensor(
-        [
-            rr.get_external_feature("pKa_shift", 0.0),
-            rr.get_external_feature("dpKa_desolv", 0.0),
-            rr.get_external_feature("dpKa_bg", 0.0),
-            rr.get_external_feature("dpKa_titr", 0.0),
-        ],
-        dtype=torch.float32,
-    )
-    conformation = torch.tensor(
-        [
-            rr.get_external_feature("omega", 0.0),
-            rr.get_external_feature("rama_prepro", 0.0),
-            rr.get_external_feature("fa_dun", 0.0),
-        ],
-        dtype=torch.float32,
-    )
-    interactions = torch.tensor(
-        [
-            rr.get_external_feature("fa_elec", 0.0),
-            rr.get_external_feature("fa_atr", 0.0),
-            rr.get_external_feature("fa_rep", 0.0),
-        ],
-        dtype=torch.float32,
-    )
     return {
-        "burial": burial,
-        "pka": pka,
-        "conformation": conformation,
-        "interactions": interactions,
+        "burial": build_external_feature_vector(rr, BURIAL_FEATURE_NAMES),
+        "pka": build_external_feature_vector(rr, PKA_FEATURE_NAMES),
+        "conformation": build_external_feature_vector(rr, CONFORMATION_FEATURE_NAMES),
+        "interactions": build_external_feature_vector(rr, INTERACTION_FEATURE_NAMES),
     }
 
 
 class MultinuclearSiteHandler:
     @staticmethod
     def metal_coords_for_pocket(pocket: PocketRecord) -> Tensor:
-        metal_coords = pocket.resolved_metal_coords()
+        metal_coords = pocket.metal_coords
         return torch.stack([coord.float() for coord in metal_coords], dim=0)
 
     @staticmethod
@@ -226,6 +204,7 @@ class MultinuclearSiteHandler:
 
     @staticmethod
     def site_metal_stats(pocket: PocketRecord) -> Tensor:
+        # Pocket-level metal-site summary used later in late fusion.
         metal_coords = MultinuclearSiteHandler.metal_coords_for_pocket(pocket)
         metal_count = float(metal_coords.size(0))
         is_multinuclear = float(metal_count > 1.0)
@@ -263,6 +242,7 @@ def compute_net_ligand_vector(
         nearest_metals, min_dists = MultinuclearSiteHandler.nearest_metal_for_points(coords, metal_coords)
         keep = min_dists <= ligand_cutoff
         if keep.any():
+            # Sum ligand-to-metal directions over direct binders to get one site-level orientation vector.
             v_net = v_net + (coords[keep] - nearest_metals[keep]).sum(dim=0)
 
     return v_net
@@ -295,6 +275,7 @@ def residue_to_stage1_node_features(
         dtype=torch.float32,
     )
 
+    # v_res anchors the residue to its nearest metal; x_misc stores norms and the angle proxy to v_net.
     v_res = (ca.float() - nearest_metal_to_ca).float()
     v_net = v_net.float()
     v_net_norm = float(safe_norm(v_net, dim=-1).item())
@@ -304,6 +285,7 @@ def residue_to_stage1_node_features(
 
     x_misc = torch.tensor([v_net_norm, v_res_norm, cos_theta], dtype=torch.float32)
     env_groups = build_external_feature_groups(rr)
+    # Two node vector channels: local residue geometry and residue-to-metal direction.
     x_vec = torch.stack([(fg - ca).float(), v_res], dim=0)
 
     return {
