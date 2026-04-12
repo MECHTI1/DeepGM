@@ -11,7 +11,7 @@ from project_paths import (
     TRANSITION_METALS_SUMMARY_CSV,
     WHETHER_CATALYTIC_SUMMARY_CSV,
 )
-from training_labels import normalize_ec_numbers
+from training.labels import normalize_ec_numbers
 
 
 JOB_ROOT = MAHOMES_TRAIN_SET_DIR

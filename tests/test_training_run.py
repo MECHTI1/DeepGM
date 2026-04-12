@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+
+import torch
+
+from data_structures import PocketRecord, ResidueRecord
+from training.config import parse_args
+from training.run import PocketSplit, build_dataset_summary, split_pockets
+
+
+def make_residue(
+    *,
+    chain_id: str = "A",
+    resseq: int = 1,
+    resname: str = "HIS",
+    has_esm_embedding: bool = False,
+    has_external_features: bool = False,
+) -> ResidueRecord:
+    return ResidueRecord(
+        chain_id=chain_id,
+        resseq=resseq,
+        icode="",
+        resname=resname,
+        atoms={"CA": torch.tensor([0.0, 0.0, 0.0])},
+        has_esm_embedding=has_esm_embedding,
+        has_external_features=has_external_features,
+    )
+
+
+def make_pocket(
+    *,
+    structure_id: str,
+    pocket_id: str,
+    residue: ResidueRecord | None = None,
+    y_metal: int | None = None,
+    y_ec: int | None = None,
+) -> PocketRecord:
+    return PocketRecord(
+        structure_id=structure_id,
+        pocket_id=pocket_id,
+        metal_element="ZN",
+        metal_coords=[torch.tensor([1.0, 2.0, 3.0])],
+        residues=[residue or make_residue()],
+        y_metal=y_metal,
+        y_ec=y_ec,
+    )
+
+
+class TrainConfigParsingTests(unittest.TestCase):
+    def test_parse_args_builds_expected_config(self) -> None:
+        config = parse_args(
+            [
+                "--structure-dir",
+                "/tmp/structures",
+                "--summary-csv",
+                "/tmp/summary.csv",
+                "--epochs",
+                "3",
+                "--batch-size",
+                "16",
+                "--split-by",
+                "structure_id",
+                "--allow-missing-esm-embeddings",
+            ]
+        )
+
+        self.assertEqual(config.structure_dir, Path("/tmp/structures"))
+        self.assertEqual(config.summary_csv, Path("/tmp/summary.csv"))
+        self.assertEqual(config.epochs, 3)
+        self.assertEqual(config.batch_size, 16)
+        self.assertEqual(config.split_by, "structure_id")
+        self.assertFalse(config.require_esm_embeddings)
+        self.assertTrue(config.require_external_features)
+
+
+class TrainingSplitTests(unittest.TestCase):
+    def test_split_pockets_keeps_same_pdbid_in_one_split(self) -> None:
+        pockets = [
+            make_pocket(structure_id="1abc__chain_A__EC_1.1.1.1", pocket_id="p1"),
+            make_pocket(structure_id="1abc__chain_B__EC_2.2.2.2", pocket_id="p2"),
+            make_pocket(structure_id="2def__chain_A__EC_3.3.3.3", pocket_id="p3"),
+            make_pocket(structure_id="3ghi__chain_A__EC_4.4.4.4", pocket_id="p4"),
+        ]
+
+        split = split_pockets(pockets, val_fraction=0.5, split_by="pdbid", seed=7)
+
+        train_pdbids = {pocket.structure_id.split("__", 1)[0] for pocket in split.train_pockets}
+        val_pdbids = {pocket.structure_id.split("__", 1)[0] for pocket in split.val_pockets}
+        self.assertFalse(train_pdbids & val_pdbids)
+        self.assertEqual(
+            sorted(pocket.pocket_id for pocket in pockets),
+            sorted(pocket.pocket_id for pocket in split.train_pockets + split.val_pockets),
+        )
+
+    def test_zero_val_fraction_returns_all_training_pockets(self) -> None:
+        pockets = [make_pocket(structure_id="1abc__chain_A__EC_1.1.1.1", pocket_id="p1")]
+
+        split = split_pockets(pockets, val_fraction=0.0, split_by="pdbid", seed=1)
+
+        self.assertEqual(split.train_pockets, pockets)
+        self.assertEqual(split.val_pockets, [])
+
+
+class DatasetSummaryTests(unittest.TestCase):
+    def test_build_dataset_summary_reports_split_counts_and_label_distribution(self) -> None:
+        train_pocket = make_pocket(
+            structure_id="1abc__chain_A__EC_1.1.1.1",
+            pocket_id="train-pocket",
+            residue=make_residue(has_esm_embedding=True, has_external_features=False),
+            y_metal=0,
+            y_ec=1,
+        )
+        val_pocket = make_pocket(
+            structure_id="2def__chain_A__EC_2.2.2.2",
+            pocket_id="val-pocket",
+            residue=make_residue(has_esm_embedding=False, has_external_features=True),
+            y_metal=2,
+            y_ec=4,
+        )
+        split = PocketSplit(train_pockets=[train_pocket], val_pockets=[val_pocket])
+        config = parse_args(
+            [
+                "--structure-dir",
+                "/tmp/structures",
+                "--summary-csv",
+                "/tmp/summary.csv",
+                "--val-fraction",
+                "0.25",
+            ]
+        )
+
+        summary = build_dataset_summary(
+            split,
+            config,
+            feature_load_report={"feature_fallbacks": [], "loaded_structure_files": 2},
+        )
+
+        self.assertEqual(summary["n_train_pockets"], 1)
+        self.assertEqual(summary["n_val_pockets"], 1)
+        self.assertEqual(summary["split_by"], "pdbid")
+        self.assertEqual(summary["train_metal_distribution"]["Zn"], 1)
+        self.assertEqual(summary["val_metal_distribution"]["Co/Fe/Ni"], 1)
+        self.assertEqual(summary["train_feature_coverage"]["esm_residue_coverage"], 1.0)
+        self.assertEqual(summary["val_feature_coverage"]["external_feature_residue_coverage"], 1.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

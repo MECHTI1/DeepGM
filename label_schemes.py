@@ -11,27 +11,26 @@ EC_TOP_LEVEL_LABELS = {
 }
 N_EC_CLASSES = len(EC_TOP_LEVEL_LABELS)
 
-# Metal class mapping used by the current classifier:
+# Active metal class mapping for the current catalytic MAHOMES summary:
 # 0 -> Zn
 # 1 -> Cu
-# 2 -> Mn
-# 3 -> merged Co / Fe / Ni class
+# 2 -> merged Co / Fe / Ni class
 METAL_TARGET_LABELS = {
     0: "Zn",
     1: "Cu",
-    2: "Mn",
-    3: "Co/Fe/Ni",
+    2: "Co/Fe/Ni",
 }
 N_METAL_CLASSES = len(METAL_TARGET_LABELS)
 
 METAL_SYMBOL_TO_TARGET = {
     "ZN": 0,
     "CU": 1,
-    "MN": 2,
-    "CO": 3,
-    "FE": 3,
-    "NI": 3,
+    "CO": 2,
+    "FE": 2,
+    "NI": 2,
 }
+
+
 def map_site_metal_symbols(symbols: str | tuple[str, ...] | list[str]) -> int | None:
     if isinstance(symbols, str):
         symbols = (symbols,)

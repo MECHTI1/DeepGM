@@ -17,7 +17,7 @@ from data_structures import (
     NORMALIZABLE_FEATURE_NAMES,
     PocketRecord,
 )
-from graph_construction import (
+from graph.construction import (
     pocket_to_pyg_data,
 )
 from label_schemes import (
@@ -27,7 +27,7 @@ from label_schemes import (
     N_METAL_CLASSES,
 )
 from model import GVPPocketClassifier
-from training_data import (
+from training.data import (
     DEFAULT_STRUCTURE_DIR,
     load_smoke_test_pockets_from_dir,
 )
@@ -266,6 +266,7 @@ def run_smoke_test(
         structure_dir=structure_dir,
         max_cases=max_cases,
         require_full_labels=True,
+        esm_dim=esm_dim,
     )
 
     graph_summary = summarize_graph_dataset(pockets, esm_dim=esm_dim, edge_radius=edge_radius)

@@ -5,7 +5,7 @@ import csv
 import re
 
 from project_paths import MAHOMES_SUMMARY_DIR, MAHOMES_TRAIN_SET_DIR
-from training_labels import normalize_ec_numbers
+from training.labels import normalize_ec_numbers
 
 JOB_ROOT = MAHOMES_TRAIN_SET_DIR
 SUMMARY_DIR = MAHOMES_SUMMARY_DIR

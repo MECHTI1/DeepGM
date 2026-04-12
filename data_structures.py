@@ -135,9 +135,11 @@ class ResidueRecord:
     resname: str
     atoms: Dict[str, Tensor]
     esm_embedding: Optional[Tensor] = None
+    has_esm_embedding: bool = False
     is_first_shell: bool = False
     is_second_shell: bool = False
     external_features: Dict[str, float] = field(default_factory=dict)
+    has_external_features: bool = False
 
     def residue_id(self) -> Tuple[str, int, str]:
         return (self.chain_id, self.resseq, self.icode)
