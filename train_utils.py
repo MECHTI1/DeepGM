@@ -30,7 +30,6 @@ from model import GVPPocketClassifier
 from training_data import (
     DEFAULT_STRUCTURE_DIR,
     load_smoke_test_pockets_from_dir,
-    load_training_pockets_from_dir,
 )
 
 
@@ -174,6 +173,20 @@ def train_epoch(model: nn.Module, loader: DataLoader, optimizer: torch.optim.Opt
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
+        total += float(loss.item())
+
+    return total / max(1, len(loader))
+
+
+@torch.no_grad()
+def evaluate_epoch(model: nn.Module, loader: DataLoader, device: str = "cpu") -> float:
+    model.eval()
+    total = 0.0
+
+    for batch in loader:
+        batch = batch.to(device)
+        model_outputs = model(batch)
+        loss = model_outputs["loss"]
         total += float(loss.item())
 
     return total / max(1, len(loader))

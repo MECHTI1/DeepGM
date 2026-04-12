@@ -28,27 +28,34 @@ def get_default_runs_dir() -> Path:
     return RUNS_DIR
 
 
-def resolve_embeddings_dir(configured_dir: str | None, create: bool = True) -> Path:
+def _resolve_project_dir(
+    configured_dir: str | None,
+    default_dir: Path,
+    create: bool = True,
+) -> Path:
     if configured_dir:
-        embeddings_dir = Path(configured_dir).expanduser()
-        if not embeddings_dir.is_absolute():
-            embeddings_dir = PROJECT_ROOT / embeddings_dir
+        resolved_dir = Path(configured_dir).expanduser()
+        if not resolved_dir.is_absolute():
+            resolved_dir = PROJECT_ROOT / resolved_dir
     else:
-        embeddings_dir = get_default_embeddings_dir()
+        resolved_dir = default_dir
 
     if create:
-        embeddings_dir.mkdir(parents=True, exist_ok=True)
-    return embeddings_dir
+        resolved_dir.mkdir(parents=True, exist_ok=True)
+    return resolved_dir
+
+
+def resolve_embeddings_dir(configured_dir: str | None, create: bool = True) -> Path:
+    return _resolve_project_dir(
+        configured_dir=configured_dir,
+        default_dir=get_default_embeddings_dir(),
+        create=create,
+    )
 
 
 def resolve_runs_dir(configured_dir: str | None, create: bool = True) -> Path:
-    if configured_dir:
-        runs_dir = Path(configured_dir).expanduser()
-        if not runs_dir.is_absolute():
-            runs_dir = PROJECT_ROOT / runs_dir
-    else:
-        runs_dir = get_default_runs_dir()
-
-    if create:
-        runs_dir.mkdir(parents=True, exist_ok=True)
-    return runs_dir
+    return _resolve_project_dir(
+        configured_dir=configured_dir,
+        default_dir=get_default_runs_dir(),
+        create=create,
+    )

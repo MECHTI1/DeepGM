@@ -1,3 +1,6 @@
 .data/
 .old/
 .Study_Plan.md
+__pycache__/
+*.py[cod]
+embed_helpers/embed_results/

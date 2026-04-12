@@ -78,7 +78,11 @@ def pocket_matches_allowed_sites(
         if not isinstance(site_id, tuple) or len(site_id) != 3:
             continue
         chain_id, resseq, _icode = site_id
-        site_key = (pdbid, ec_number, f"{str(chain_id).strip()}_{int(resseq)}")
+        try:
+            normalized_resseq = int(str(resseq).strip())
+        except (TypeError, ValueError):
+            continue
+        site_key = (pdbid, ec_number, f"{str(chain_id).strip()}_{normalized_resseq}")
         if site_key in allowed_site_keys:
             return True
     return False
