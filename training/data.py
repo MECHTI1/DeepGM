@@ -30,6 +30,24 @@ class PocketLoadResult:
     feature_report: Dict[str, Any]
 
 
+def _assemble_pocket_load_result(
+    *,
+    pockets: List[PocketRecord],
+    structure_files: List[Path],
+    skipped_structures: List[Dict[str, str]],
+    feature_fallbacks: List[Dict[str, str]],
+) -> PocketLoadResult:
+    return PocketLoadResult(
+        pockets=pockets,
+        feature_report=build_load_report(
+            pockets=pockets,
+            structure_files=structure_files,
+            skipped_structures=skipped_structures,
+            feature_fallbacks=feature_fallbacks,
+        ),
+    )
+
+
 def load_labeled_pockets_with_report_from_dir(
     structure_dir: Path,
     max_cases: Optional[int] = None,
@@ -75,14 +93,11 @@ def load_labeled_pockets_with_report_from_dir(
                 continue
             pockets.append(pocket)
             if max_cases is not None and len(pockets) >= max_cases:
-                return PocketLoadResult(
+                return _assemble_pocket_load_result(
                     pockets=pockets,
-                    feature_report=build_load_report(
-                        pockets=pockets,
-                        structure_files=structure_files,
-                        skipped_structures=skipped_structures,
-                        feature_fallbacks=feature_fallbacks,
-                    ),
+                    structure_files=structure_files,
+                    skipped_structures=skipped_structures,
+                    feature_fallbacks=feature_fallbacks,
                 )
 
     if not pockets:
@@ -90,14 +105,11 @@ def load_labeled_pockets_with_report_from_dir(
             raise ValueError(f"No fully labeled metal-centered pockets were extracted from {structure_root}")
         raise ValueError(f"No metal-centered pockets were extracted from {structure_root}")
 
-    return PocketLoadResult(
+    return _assemble_pocket_load_result(
         pockets=pockets,
-        feature_report=build_load_report(
-            pockets=pockets,
-            structure_files=structure_files,
-            skipped_structures=skipped_structures,
-            feature_fallbacks=feature_fallbacks,
-        ),
+        structure_files=structure_files,
+        skipped_structures=skipped_structures,
+        feature_fallbacks=feature_fallbacks,
     )
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import re
+from pathlib import Path
 
 from project_paths import MAHOMES_SUMMARY_DIR, MAHOMES_TRAIN_SET_DIR
 from training.labels import normalize_ec_numbers

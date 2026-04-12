@@ -14,23 +14,29 @@ from data_structures import PocketRecord
 from label_schemes import EC_TOP_LEVEL_LABELS, METAL_TARGET_LABELS, N_EC_CLASSES, N_METAL_CLASSES
 from model import GVPPocketClassifier
 from project_paths import resolve_runs_dir
-from training.config import SPLIT_BY_CHOICES, TrainConfig, config_to_payload
-from training.data import build_pocket_feature_coverage, load_training_pockets_with_report_from_dir
-from training.labels import parse_structure_identity
-from training.utils import (
-    PocketGraphDataset,
+from training.config import TrainConfig, config_to_payload
+from training.data import load_training_pockets_with_report_from_dir
+from training.graph_dataset import FeatureNormalizationStats, PocketGraphDataset
+from training.loop import (
     accuracy_from_logits,
     balanced_class_weights_from_pockets,
-    evaluate_epoch,
-    predict_batch,
+    evaluate_epoch_with_predictions,
     train_epoch,
 )
+from training.splits import PocketSplit, build_dataset_summary, split_pockets
 
 
 @dataclass(frozen=True)
-class PocketSplit:
-    train_pockets: list[PocketRecord]
-    val_pockets: list[PocketRecord]
+class PreparedRun:
+    config_payload: dict[str, Any]
+    run_dir: Path
+    split: PocketSplit
+    dataset_summary: dict[str, Any]
+    normalization_stats: FeatureNormalizationStats
+    train_loader: DataLoader
+    val_loader: DataLoader | None
+    model: GVPPocketClassifier
+    optimizer: torch.optim.Optimizer
 
 
 def set_seed(seed: int) -> None:
@@ -51,106 +57,6 @@ def save_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def validate_split_by(split_by: str) -> str:
-    if split_by not in SPLIT_BY_CHOICES:
-        raise ValueError(
-            f"Unsupported --split-by value: {split_by!r}. "
-            "Expected one of: 'pdbid', 'structure_id', 'pocket_id'."
-        )
-    return split_by
-
-
-def pocket_split_key(pocket: PocketRecord, split_by: str) -> str:
-    if split_by == "structure_id":
-        return pocket.structure_id
-    if split_by == "pdbid":
-        pdbid, _chain, _ec = parse_structure_identity(pocket.structure_id)
-        return pdbid
-    if split_by == "pocket_id":
-        return pocket.pocket_id
-    raise AssertionError(f"Unhandled split_by value: {split_by!r}")
-
-
-def split_pockets(
-    pockets: list[PocketRecord],
-    val_fraction: float,
-    split_by: str,
-    seed: int,
-) -> PocketSplit:
-    split_by = validate_split_by(split_by)
-    if not 0.0 <= val_fraction < 1.0:
-        raise ValueError(f"--val-fraction must be in [0, 1), got {val_fraction}")
-    if val_fraction == 0.0:
-        return PocketSplit(train_pockets=pockets, val_pockets=[])
-
-    grouped: dict[str, list[PocketRecord]] = {}
-    for pocket in pockets:
-        grouped.setdefault(pocket_split_key(pocket, split_by), []).append(pocket)
-
-    group_items = list(grouped.items())
-    generator = torch.Generator().manual_seed(seed)
-    order = torch.randperm(len(group_items), generator=generator).tolist()
-    shuffled = [group_items[idx] for idx in order]
-
-    target_val_size = max(1, int(round(len(pockets) * val_fraction)))
-    val_pockets: list[PocketRecord] = []
-    train_pockets: list[PocketRecord] = []
-    val_count = 0
-
-    for _group_key, group_pockets in shuffled:
-        if val_count < target_val_size:
-            val_pockets.extend(group_pockets)
-            val_count += len(group_pockets)
-        else:
-            train_pockets.extend(group_pockets)
-
-    if not train_pockets or not val_pockets:
-        raise ValueError(
-            "Validation split produced an empty train or validation set. "
-            "Adjust --val-fraction or --split-by."
-        )
-
-    return PocketSplit(train_pockets=train_pockets, val_pockets=val_pockets)
-
-
-def count_labels(
-    pockets: list[PocketRecord],
-    attr_name: str,
-    label_map: dict[int, str],
-) -> dict[str, int]:
-    counts = {label_name: 0 for label_name in label_map.values()}
-    for pocket in pockets:
-        label_idx = getattr(pocket, attr_name)
-        if label_idx is None:
-            continue
-        counts[label_map[int(label_idx)]] += 1
-    return counts
-
-
-def build_dataset_summary(
-    split: PocketSplit,
-    config: TrainConfig,
-    feature_load_report: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "structure_dir": str(config.structure_dir),
-        "summary_csv": str(config.summary_csv),
-        "esm_embeddings_dir": config.esm_embeddings_dir,
-        "external_features_root_dir": config.external_features_root_dir,
-        "n_train_pockets": len(split.train_pockets),
-        "n_val_pockets": len(split.val_pockets),
-        "val_fraction": config.val_fraction,
-        "split_by": config.split_by,
-        "feature_load_report": feature_load_report,
-        "train_feature_coverage": build_pocket_feature_coverage(split.train_pockets),
-        "val_feature_coverage": build_pocket_feature_coverage(split.val_pockets),
-        "train_metal_distribution": count_labels(split.train_pockets, "y_metal", METAL_TARGET_LABELS),
-        "train_ec_distribution": count_labels(split.train_pockets, "y_ec", EC_TOP_LEVEL_LABELS),
-        "val_metal_distribution": count_labels(split.val_pockets, "y_metal", METAL_TARGET_LABELS),
-        "val_ec_distribution": count_labels(split.val_pockets, "y_ec", EC_TOP_LEVEL_LABELS),
-    }
-
-
 def accuracy_or_none(predictions: dict[str, Any], logits_key: str, target_key: str) -> float | None:
     if target_key not in predictions:
         return None
@@ -160,7 +66,7 @@ def accuracy_or_none(predictions: dict[str, Any], logits_key: str, target_key: s
 def build_dataloader(
     pockets: list[PocketRecord],
     config: TrainConfig,
-    normalization_stats,
+    normalization_stats: FeatureNormalizationStats,
     shuffle: bool,
 ) -> DataLoader:
     dataset = PocketGraphDataset(
@@ -177,16 +83,15 @@ def evaluate_split_metrics(model, loader: DataLoader | None, device: str, prefix
     if loader is None:
         return {}
 
-    loss = evaluate_epoch(model, loader, device=device)
-    predictions = predict_batch(model, loader, device=device)
+    predictions = evaluate_epoch_with_predictions(model, loader, device=device)
     return {
-        f"{prefix}_loss": loss,
+        f"{prefix}_loss": predictions["loss"],
         f"{prefix}_metal_acc": accuracy_or_none(predictions, "metal_logits", "metal_y"),
         f"{prefix}_ec_acc": accuracy_or_none(predictions, "ec_logits", "ec_y"),
     }
 
 
-def normalization_stats_payload(normalization_stats) -> dict[str, Any]:
+def normalization_stats_payload(normalization_stats: FeatureNormalizationStats) -> dict[str, Any]:
     return {
         "means": normalization_stats.means,
         "stds": normalization_stats.stds,
@@ -200,7 +105,7 @@ def checkpoint_payload(
     optimizer_state_dict: dict[str, Any],
     history: list[dict[str, Any]],
     config_payload: dict[str, Any],
-    normalization_stats,
+    normalization_stats: FeatureNormalizationStats,
     dataset_summary: dict[str, Any],
 ) -> dict[str, Any]:
     return {
@@ -233,10 +138,8 @@ def format_epoch_log(record: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def run_training(config: TrainConfig) -> Path:
-    set_seed(config.seed)
+def prepare_run(config: TrainConfig) -> PreparedRun:
     config_payload = config_to_payload(config)
-
     load_result = load_training_pockets_with_report_from_dir(
         structure_dir=config.structure_dir,
         require_full_labels=True,
@@ -263,8 +166,6 @@ def run_training(config: TrainConfig) -> Path:
         config,
         feature_load_report=load_result.feature_report,
     )
-    save_json(run_dir / "dataset_summary.json", dataset_summary)
-
     normalization_stats = PocketGraphDataset.fit_normalization_stats(
         split.train_pockets,
         esm_dim=config.esm_dim,
@@ -295,57 +196,85 @@ def run_training(config: TrainConfig) -> Path:
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
+    return PreparedRun(
+        config_payload=config_payload,
+        run_dir=run_dir,
+        split=split,
+        dataset_summary=dataset_summary,
+        normalization_stats=normalization_stats,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        model=model,
+        optimizer=optimizer,
+    )
 
-    history: list[dict[str, float | int]] = []
+
+def train_and_select_checkpoint(
+    prepared: PreparedRun,
+    config: TrainConfig,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    history: list[dict[str, Any]] = []
     best_metric = float("inf")
     best_checkpoint = None
     for epoch in range(1, config.epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, device=config.device)
+        train_loss = train_epoch(prepared.model, prepared.train_loader, prepared.optimizer, device=config.device)
+        train_metrics = evaluate_split_metrics(prepared.model, prepared.train_loader, config.device, prefix="train")
+        train_metrics.pop("train_loss", None)
         record = {
             "epoch": epoch,
             "train_loss": train_loss,
-            **evaluate_split_metrics(model, train_loader, config.device, prefix="train"),
+            **train_metrics,
         }
 
-        val_metrics = evaluate_split_metrics(model, val_loader, config.device, prefix="val")
+        val_metrics = evaluate_split_metrics(prepared.model, prepared.val_loader, config.device, prefix="val")
         record.update(val_metrics)
         if val_metrics and val_metrics["val_loss"] < best_metric:
             best_metric = val_metrics["val_loss"]
             best_checkpoint = checkpoint_payload(
-                model_state_dict=copy.deepcopy(model.state_dict()),
-                optimizer_state_dict=copy.deepcopy(optimizer.state_dict()),
+                model_state_dict=copy.deepcopy(prepared.model.state_dict()),
+                optimizer_state_dict=copy.deepcopy(prepared.optimizer.state_dict()),
                 history=copy.deepcopy(history + [record]),
-                config_payload=config_payload,
-                normalization_stats=normalization_stats,
-                dataset_summary=dataset_summary,
+                config_payload=prepared.config_payload,
+                normalization_stats=prepared.normalization_stats,
+                dataset_summary=prepared.dataset_summary,
             )
             best_checkpoint["epoch"] = epoch
 
         history.append(record)
         print(format_epoch_log(record))
+    return history, best_checkpoint
 
-    checkpoint_path = run_dir / "last_model_checkpoint.pt"
+
+def persist_run_outputs(
+    prepared: PreparedRun,
+    *,
+    history: list[dict[str, float | int]],
+    best_checkpoint: dict[str, Any] | None,
+) -> None:
+    save_json(prepared.run_dir / "dataset_summary.json", prepared.dataset_summary)
+
+    checkpoint_path = prepared.run_dir / "last_model_checkpoint.pt"
     torch.save(
         checkpoint_payload(
-            model_state_dict=model.state_dict(),
-            optimizer_state_dict=optimizer.state_dict(),
+            model_state_dict=prepared.model.state_dict(),
+            optimizer_state_dict=prepared.optimizer.state_dict(),
             history=history,
-            config_payload=config_payload,
-            normalization_stats=normalization_stats,
-            dataset_summary=dataset_summary,
+            config_payload=prepared.config_payload,
+            normalization_stats=prepared.normalization_stats,
+            dataset_summary=prepared.dataset_summary,
         ),
         checkpoint_path,
     )
 
     if best_checkpoint is not None:
-        best_checkpoint_path = run_dir / "best_model_checkpoint.pt"
+        best_checkpoint_path = prepared.run_dir / "best_model_checkpoint.pt"
         torch.save(best_checkpoint, best_checkpoint_path)
 
     save_json(
-        run_dir / "run_config.json",
+        prepared.run_dir / "run_config.json",
         {
-            "config": config_payload,
-            "dataset_summary": dataset_summary,
+            "config": prepared.config_payload,
+            "dataset_summary": prepared.dataset_summary,
             "metal_labels": METAL_TARGET_LABELS,
             "ec_labels": EC_TOP_LEVEL_LABELS,
             "history": history,
@@ -354,10 +283,17 @@ def run_training(config: TrainConfig) -> Path:
 
     print(f"Saved checkpoint to {checkpoint_path}")
     if best_checkpoint is not None:
-        print(f"Saved best checkpoint to {run_dir / 'best_model_checkpoint.pt'}")
-    print(f"Saved dataset summary to {run_dir / 'dataset_summary.json'}")
-    print(f"Saved run config to {run_dir / 'run_config.json'}")
-    return run_dir
+        print(f"Saved best checkpoint to {prepared.run_dir / 'best_model_checkpoint.pt'}")
+    print(f"Saved dataset summary to {prepared.run_dir / 'dataset_summary.json'}")
+    print(f"Saved run config to {prepared.run_dir / 'run_config.json'}")
+
+
+def run_training(config: TrainConfig) -> Path:
+    set_seed(config.seed)
+    prepared = prepare_run(config)
+    history, best_checkpoint = train_and_select_checkpoint(prepared, config)
+    persist_run_outputs(prepared, history=history, best_checkpoint=best_checkpoint)
+    return prepared.run_dir
 
 
 __all__ = [
@@ -367,13 +303,13 @@ __all__ = [
     "build_dataloader",
     "build_run_dir",
     "checkpoint_payload",
-    "count_labels",
     "evaluate_split_metrics",
     "format_epoch_log",
-    "pocket_split_key",
+    "persist_run_outputs",
+    "prepare_run",
     "run_training",
     "save_json",
     "set_seed",
     "split_pockets",
-    "validate_split_by",
+    "train_and_select_checkpoint",
 ]

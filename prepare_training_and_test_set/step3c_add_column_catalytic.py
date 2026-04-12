@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import re
+from pathlib import Path
 
 from project_paths import (
     CATALYTIC_ONLY_SUMMARY_CSV,
@@ -22,10 +23,31 @@ CATALYTIC_ONLY_CSV = CATALYTIC_ONLY_SUMMARY_CSV
 
 PREDICTION_INPUT_RE = re.compile(r"^(?P<pdbid>[^_]+)__chain_(?P<chain>[^_]+)__EC_(?P<ec>.+)$")
 CATALYTIC_COLUMN = "whether_catalytic"
+PREDICTION_REQUIRED_COLUMNS = {
+    "jobid",
+    "input file",
+    "site#",
+    "prediction",
+    "percent catalytic predictions",
+    "Name1",
+    "Name2",
+    "Name3",
+    "Name4",
+    "Res#1",
+    "Res#2",
+    "Res#3",
+    "Res#4",
+}
+INPUT_SUMMARY_REQUIRED_COLUMNS = {"pdbid", "EC number", "metal residue number"}
 
 
 def parse_prediction_label(value: str) -> int:
-    return 1 if value.strip().lower() == "catalytic" else 0
+    normalized = value.strip().lower()
+    if normalized in {"catalytic", "1", "true"}:
+        return 1
+    if normalized in {"non-catalytic", "non catalytic", "0", "false"}:
+        return 0
+    raise ValueError(f"Unsupported prediction label: {value!r}")
 
 
 def parse_prediction_input_file(value: str) -> tuple[str, str, str]:
@@ -43,13 +65,20 @@ def format_chain_residue_number(chain_id: str, residue_number: int) -> str:
     return f"{chain_id}_{residue_number}"
 
 
+def require_columns(fieldnames: list[str] | None, required: set[str], csv_path: Path) -> None:
+    if fieldnames is None:
+        raise ValueError(f"Could not read CSV header from: {csv_path}")
+    missing = sorted(required - set(fieldnames))
+    if missing:
+        raise ValueError(f"Missing required columns in {csv_path}: {missing}")
+
+
 def iter_prediction_summary_rows(job_root: Path):
     for pred_path in sorted(job_root.glob("job_*/predictions.csv")):
         job_name = pred_path.parent.name
         with pred_path.open("r", encoding="utf-8", newline="") as handle:
             reader = csv.DictReader(handle)
-            if reader.fieldnames is None:
-                raise ValueError(f"Could not read CSV header from: {pred_path}")
+            require_columns(reader.fieldnames, PREDICTION_REQUIRED_COLUMNS, pred_path)
 
             for row in reader:
                 pdbid, chain_id, ec_number = parse_prediction_input_file(row["input file"])
@@ -60,6 +89,12 @@ def iter_prediction_summary_rows(job_root: Path):
                     residue_number = (row.get(f"Res#{idx}") or "").strip()
                     if not metal_type or not residue_number:
                         continue
+                    try:
+                        residue_number_int = int(float(residue_number))
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"Invalid residue number {residue_number!r} in {pred_path} for row jobid={row['jobid']!r}"
+                        ) from exc
 
                     yield {
                         "job_name": job_name,
@@ -70,10 +105,7 @@ def iter_prediction_summary_rows(job_root: Path):
                         "chain": chain_id,
                         "EC number": ec_number,
                         "metal residue type prediction": metal_type,
-                        "metal residue number": format_chain_residue_number(
-                            chain_id,
-                            int(float(residue_number)),
-                        ),
+                        "metal residue number": format_chain_residue_number(chain_id, residue_number_int),
                         "percent catalytic predictions": row["percent catalytic predictions"].strip(),
                         "prediction": row["prediction"].strip(),
                         CATALYTIC_COLUMN: catalytic_value,
@@ -143,8 +175,7 @@ def main() -> None:
 
     with INPUT_SUMMARY_CSV.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
-        if reader.fieldnames is None:
-            raise ValueError(f"Could not read CSV header from: {INPUT_SUMMARY_CSV}")
+        require_columns(reader.fieldnames, INPUT_SUMMARY_REQUIRED_COLUMNS, INPUT_SUMMARY_CSV)
 
         output_fieldnames = list(reader.fieldnames)
         if CATALYTIC_COLUMN not in output_fieldnames:

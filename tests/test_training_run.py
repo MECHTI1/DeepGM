@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 
 from data_structures import PocketRecord, ResidueRecord
 from training.config import parse_args
-from training.run import PocketSplit, build_dataset_summary, split_pockets
+from training.graph_dataset import FeatureNormalizationStats
+from training.run import (
+    PocketSplit,
+    PreparedRun,
+    build_dataset_summary,
+    split_pockets,
+    train_and_select_checkpoint,
+)
 
 
 def make_residue(
@@ -144,6 +152,45 @@ class DatasetSummaryTests(unittest.TestCase):
         self.assertEqual(summary["val_metal_distribution"]["Co/Fe/Ni"], 1)
         self.assertEqual(summary["train_feature_coverage"]["esm_residue_coverage"], 1.0)
         self.assertEqual(summary["val_feature_coverage"]["external_feature_residue_coverage"], 1.0)
+
+
+class TrainingLoopHistoryTests(unittest.TestCase):
+    @patch("training.run.train_epoch", return_value=0.75)
+    @patch("training.run.evaluate_split_metrics")
+    def test_train_and_select_checkpoint_keeps_optimizer_train_loss(
+        self,
+        mock_evaluate_split_metrics,
+        _mock_train_epoch,
+    ) -> None:
+        def metrics_side_effect(model, loader, device, prefix):
+            if prefix == "train":
+                return {"train_loss": 0.11, "train_metal_acc": 0.8, "train_ec_acc": 0.6}
+            return {"val_loss": 0.4, "val_metal_acc": 0.7, "val_ec_acc": 0.5}
+
+        mock_evaluate_split_metrics.side_effect = metrics_side_effect
+
+        model = torch.nn.Linear(1, 1)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        prepared = PreparedRun(
+            config_payload={},
+            run_dir=Path("/tmp"),
+            split=PocketSplit(train_pockets=[], val_pockets=[]),
+            dataset_summary={},
+            normalization_stats=FeatureNormalizationStats(means={}, stds={}),
+            train_loader=None,
+            val_loader=None,
+            model=model,
+            optimizer=optimizer,
+        )
+        config = parse_args(["--epochs", "1"])
+
+        history, best_checkpoint = train_and_select_checkpoint(prepared, config)
+
+        self.assertEqual(history[0]["train_loss"], 0.75)
+        self.assertEqual(history[0]["train_metal_acc"], 0.8)
+        self.assertEqual(history[0]["train_ec_acc"], 0.6)
+        self.assertIsNotNone(best_checkpoint)
+        self.assertEqual(best_checkpoint["epoch"], 1)
 
 
 if __name__ == "__main__":
