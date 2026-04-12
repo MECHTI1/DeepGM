@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -19,9 +18,6 @@ from data_structures import (
     PocketRecord,
 )
 from graph_construction import (
-    canonical_ring_edges_output_path,
-    extract_metal_pockets_from_structure,
-    parse_structure_file,
     pocket_to_pyg_data,
 )
 from label_schemes import (
@@ -29,13 +25,13 @@ from label_schemes import (
     METAL_TARGET_LABELS,
     N_EC_CLASSES,
     N_METAL_CLASSES,
-    map_site_metal_symbols,
 )
 from model import GVPPocketClassifier
-
-
-DEFAULT_SMOKE_TEST_STRUCTURE_DIR = Path("/media/Data/pinmymetal_sets/mahomes/train_set")
-EC_TOP_LEVEL_RE = re.compile(r"__EC_(\d+)")
+from training_data import (
+    DEFAULT_STRUCTURE_DIR,
+    load_smoke_test_pockets_from_dir,
+    load_training_pockets_from_dir,
+)
 
 
 @dataclass
@@ -244,80 +240,8 @@ def accuracy_from_logits(logits: Tensor, y: Tensor) -> float:
     return float((pred == y).float().mean().item())
 
 
-def parse_ec_top_level_from_structure_path(path: Path) -> Optional[int]:
-    match = EC_TOP_LEVEL_RE.search(path.stem)
-    if not match:
-        return None
-    top_level = int(match.group(1))
-    if not 1 <= top_level <= 7:
-        return None
-    return top_level - 1
-
-
-def infer_metal_target_class_from_pocket(pocket: PocketRecord) -> Optional[int]:
-    observed_symbols = pocket.metadata.get("metal_symbols_observed")
-    if isinstance(observed_symbols, list) and observed_symbols:
-        return map_site_metal_symbols(observed_symbols)
-
-    metal_element = pocket.metal_element.strip()
-    if not metal_element:
-        return None
-
-    return map_site_metal_symbols(metal_element)
-
-
-def find_structure_files(structure_dir: Path) -> List[Path]:
-    patterns = ("*.pdb", "*.cif", "*.mmcif")
-    files: List[Path] = []
-    for pattern in patterns:
-        files.extend(structure_dir.rglob(pattern))
-    return sorted(path for path in files if path.is_file())
-
-
-def load_smoke_test_pockets_from_dir(
-    structure_dir: Path,
-    max_cases: int = 4,
-    require_full_labels: bool = True,
-) -> List[PocketRecord]:
-    structure_files = find_structure_files(structure_dir)
-    if not structure_files:
-        raise FileNotFoundError(f"No structure files found under {structure_dir}")
-
-    pockets: List[PocketRecord] = []
-    for structure_path in structure_files:
-        structure = parse_structure_file(str(structure_path), structure_id=structure_path.stem)
-        extracted = extract_metal_pockets_from_structure(structure, structure_id=structure_path.stem)
-        if not extracted:
-            continue
-
-        ec_label = parse_ec_top_level_from_structure_path(structure_path)
-
-        for pocket in extracted:
-            pocket.metadata["source_path"] = str(structure_path)
-            pocket.metadata.setdefault(
-                "ring_edges_expected_path",
-                str(canonical_ring_edges_output_path(structure_path)),
-            )
-            pocket.y_metal = infer_metal_target_class_from_pocket(pocket)
-            if ec_label is not None:
-                pocket.y_ec = ec_label
-            if require_full_labels and (pocket.y_metal is None or pocket.y_ec is None):
-                continue
-            pockets.append(pocket)
-            if len(pockets) >= max_cases:
-                return pockets
-
-    if not pockets:
-        if require_full_labels:
-            raise ValueError(
-                f"No fully labeled metal-centered pockets were extracted from {structure_dir}"
-            )
-        raise ValueError(f"No metal-centered pockets were extracted from {structure_dir}")
-    return pockets
-
-
 def run_smoke_test(
-    structure_dir: str | Path = DEFAULT_SMOKE_TEST_STRUCTURE_DIR,
+    structure_dir: str | Path = DEFAULT_STRUCTURE_DIR,
     device: str = "cpu",
     esm_dim: int = 256,
     edge_radius: float = 10.0,
@@ -326,7 +250,7 @@ def run_smoke_test(
 ) -> None:
     structure_dir = Path(structure_dir)
     pockets = load_smoke_test_pockets_from_dir(
-        structure_dir,
+        structure_dir=structure_dir,
         max_cases=max_cases,
         require_full_labels=True,
     )

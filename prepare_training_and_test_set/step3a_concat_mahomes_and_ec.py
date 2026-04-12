@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import csv
 import re
-from pathlib import Path
 
+from project_paths import MAHOMES_SUMMARY_DIR, MAHOMES_TRAIN_SET_DIR
+from training_labels import normalize_ec_numbers
 
-JOB_ROOT = Path("/media/Data/pinmymetal_sets/mahomes/train_set")
-SUMMARY_DIR = JOB_ROOT / "data_summarizing_tables"
+JOB_ROOT = MAHOMES_TRAIN_SET_DIR
+SUMMARY_DIR = MAHOMES_SUMMARY_DIR
 OUTPUT_CSV = SUMMARY_DIR / "data_summarazing_table.csv"
 
 STRUCTURE_CHAIN_RE = re.compile(r"__chain_([^_]+)")
@@ -20,16 +21,7 @@ def parse_pdbid(structure_dir_name: str) -> str:
 
 
 def parse_ec_numbers(structure_dir_name: str) -> str:
-    values = []
-    seen = set()
-    for ec_group in STRUCTURE_EC_RE.findall(structure_dir_name):
-        for ec in re.split(r"[;,]", ec_group):
-            ec = ec.strip()
-            if not ec or ec in seen:
-                continue
-            seen.add(ec)
-            values.append(ec)
-    return ";".join(values)
+    return normalize_ec_numbers(";".join(STRUCTURE_EC_RE.findall(structure_dir_name)))
 
 
 def parse_chain_id(structure_dir_name: str) -> str:

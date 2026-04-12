@@ -2,13 +2,10 @@
 from __future__ import annotations
 
 import csv
-from pathlib import Path
 
-
-JOB_ROOT = Path("/media/Data/pinmymetal_sets/mahomes/train_set")
-SUMMARY_DIR = JOB_ROOT / "data_summarizing_tables"
-INPUT_CSV = SUMMARY_DIR / "data_summarazing_table.csv"
-OUTPUT_CSV = SUMMARY_DIR / "data_summarazing_table_transition_metals.csv"
+from project_paths import SUMMARY_TABLE_CSV, TRANSITION_METALS_SUMMARY_CSV
+INPUT_CSV = SUMMARY_TABLE_CSV
+OUTPUT_CSV = TRANSITION_METALS_SUMMARY_CSV
 
 # Keep this aligned with the earlier transition-metal filter in the pipeline.
 TRANSITION_METALS = {"MN", "FE", "CO", "NI", "CU", "ZN"}
@@ -22,7 +19,7 @@ def is_transition_metal(value: str) -> bool:
 def main() -> None:
     if not INPUT_CSV.exists():
         raise FileNotFoundError(
-            f"Input summary not found: {INPUT_CSV}. Run step3_concat_mahomes_and_ec.py first."
+            f"Input summary not found: {INPUT_CSV}. Run step3a_concat_mahomes_and_ec.py first."
         )
 
     with INPUT_CSV.open("r", encoding="utf-8", newline="") as handle:

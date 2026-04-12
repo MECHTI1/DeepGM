@@ -3,15 +3,22 @@ from __future__ import annotations
 
 import csv
 import re
-from pathlib import Path
+
+from project_paths import (
+    CATALYTIC_ONLY_SUMMARY_CSV,
+    MAHOMES_TRAIN_SET_DIR,
+    PREDICTION_RESULTS_SUMMARY_CSV,
+    TRANSITION_METALS_SUMMARY_CSV,
+    WHETHER_CATALYTIC_SUMMARY_CSV,
+)
+from training_labels import normalize_ec_numbers
 
 
-JOB_ROOT = Path("/media/Data/pinmymetal_sets/mahomes/train_set")
-SUMMARY_DIR = JOB_ROOT / "data_summarizing_tables"
-INPUT_SUMMARY_CSV = SUMMARY_DIR / "data_summarazing_table_transition_metals.csv"
-PREDICTION_SUMMARY_CSV = SUMMARY_DIR / "prediction_results_summary.csv"
-OUTPUT_CSV = SUMMARY_DIR / "data_summarazing_table_transition_metals_whether_catalytic.csv"
-CATALYTIC_ONLY_CSV = SUMMARY_DIR / "final_data_summarazing_table_transition_metals_only_catalytic.csv"
+JOB_ROOT = MAHOMES_TRAIN_SET_DIR
+INPUT_SUMMARY_CSV = TRANSITION_METALS_SUMMARY_CSV
+PREDICTION_SUMMARY_CSV = PREDICTION_RESULTS_SUMMARY_CSV
+OUTPUT_CSV = WHETHER_CATALYTIC_SUMMARY_CSV
+CATALYTIC_ONLY_CSV = CATALYTIC_ONLY_SUMMARY_CSV
 
 PREDICTION_INPUT_RE = re.compile(r"^(?P<pdbid>[^_]+)__chain_(?P<chain>[^_]+)__EC_(?P<ec>.+)$")
 CATALYTIC_COLUMN = "whether_catalytic"
@@ -19,18 +26,6 @@ CATALYTIC_COLUMN = "whether_catalytic"
 
 def parse_prediction_label(value: str) -> int:
     return 1 if value.strip().lower() == "catalytic" else 0
-
-
-def normalize_ec_numbers(value: str) -> str:
-    values = []
-    seen = set()
-    for ec in re.split(r"[;,]", value):
-        ec = ec.strip()
-        if not ec or ec in seen:
-            continue
-        seen.add(ec)
-        values.append(ec)
-    return ";".join(values)
 
 
 def parse_prediction_input_file(value: str) -> tuple[str, str, str]:
