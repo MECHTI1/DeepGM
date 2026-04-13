@@ -30,6 +30,9 @@ from graph.ring_edges import (
     ring_edges_path_candidates,
 )
 
+RING_EDGE_SYMMETRY_POLICY = "bidirectional"
+RING_METAL_CONTACT_POLICY = "self_loop"
+
 
 def annotate_shell_roles(
     pocket: PocketRecord,
@@ -136,7 +139,48 @@ def build_ring_interaction_edge_records(
         return []
 
     residue_to_index = {residue.residue_id(): idx for idx, residue in enumerate(pocket.residues)}
+    metal_site_coord_map = pocket.metadata.get("metal_site_coord_map", {})
     edge_records: list[dict[str, Any]] = []
+    seen_keys: set[tuple[int, int, str]] = set()
+
+    def append_edge_record(
+        *,
+        src_idx: int,
+        dst_idx: int,
+        interaction: str,
+        src_coord: Tensor,
+        dst_coord: Tensor,
+    ) -> None:
+        edge_key = (src_idx, dst_idx, interaction)
+        if edge_key in seen_keys:
+            return
+        seen_keys.add(edge_key)
+        src_residue = pocket.residues[src_idx]
+        dst_residue = pocket.residues[dst_idx]
+        edge_dist_raw, edge_seqsep, edge_same_chain, vector_raw = build_pair_edge_geometry(
+            src_residue,
+            dst_residue,
+            src_coord=src_coord,
+            dst_coord=dst_coord,
+        )
+        edge_records.append(
+            {
+                "src": src_idx,
+                "dst": dst_idx,
+                "dist_raw": edge_dist_raw,
+                "seqsep": edge_seqsep,
+                "same_chain": edge_same_chain,
+                "vector_raw": vector_raw,
+                "interaction_type": one_hot_index(
+                    RING_INTERACTION_TO_INDEX[interaction],
+                    len(INTERACTION_SUMMARIES_OPTIONAL_WITH_RING),
+                ),
+                "source_type": one_hot_index(
+                    EDGE_SOURCE_TO_INDEX["ring"],
+                    len(EDGE_SOURCE_TYPES),
+                ),
+            }
+        )
 
     with ring_edges_path.open("r", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
@@ -146,49 +190,83 @@ def build_ring_interaction_edge_records(
                 continue
 
             try:
-                src_key = parse_ring_node_id(row["NodeId1"])[:3]
-                dst_key = parse_ring_node_id(row["NodeId2"])[:3]
+                src_node = parse_ring_node_id(row["NodeId1"])
+                dst_node = parse_ring_node_id(row["NodeId2"])
             except (KeyError, ValueError):
                 continue
 
-            if src_key not in residue_to_index or dst_key not in residue_to_index:
+            src_key = src_node[:3]
+            dst_key = dst_node[:3]
+            src_is_residue = src_key in residue_to_index
+            dst_is_residue = dst_key in residue_to_index
+            src_is_metal = src_key in metal_site_coord_map
+            dst_is_metal = dst_key in metal_site_coord_map
+
+            if src_is_residue and dst_is_residue:
+                src_idx = residue_to_index[src_key]
+                dst_idx = residue_to_index[dst_key]
+                src_coord = resolve_ring_endpoint_coord(pocket.residues[src_idx], row.get("Atom1", ""))
+                dst_coord = resolve_ring_endpoint_coord(pocket.residues[dst_idx], row.get("Atom2", ""))
+                if src_coord is None or dst_coord is None:
+                    continue
+                if float(safe_norm((dst_coord - src_coord).float(), dim=-1).item()) <= 1e-8:
+                    continue
+                append_edge_record(
+                    src_idx=src_idx,
+                    dst_idx=dst_idx,
+                    interaction=interaction,
+                    src_coord=src_coord,
+                    dst_coord=dst_coord,
+                )
+                if RING_EDGE_SYMMETRY_POLICY == "bidirectional" and src_idx != dst_idx:
+                    append_edge_record(
+                        src_idx=dst_idx,
+                        dst_idx=src_idx,
+                        interaction=interaction,
+                        src_coord=dst_coord,
+                        dst_coord=src_coord,
+                    )
                 continue
 
-            src_idx = residue_to_index[src_key]
-            dst_idx = residue_to_index[dst_key]
-            src_residue = pocket.residues[src_idx]
-            dst_residue = pocket.residues[dst_idx]
-            src_coord = resolve_ring_endpoint_coord(src_residue, row.get("Atom1", ""))
-            dst_coord = resolve_ring_endpoint_coord(dst_residue, row.get("Atom2", ""))
-            if src_coord is None or dst_coord is None:
+            if interaction != "METAL_ION:SC_LIG":
                 continue
-            if float(safe_norm((dst_coord - src_coord).float(), dim=-1).item()) <= 1e-8:
+            if RING_METAL_CONTACT_POLICY != "self_loop":
                 continue
 
-            edge_dist_raw, edge_seqsep, edge_same_chain, vector_raw = build_pair_edge_geometry(
-                src_residue,
-                dst_residue,
-                src_coord=src_coord,
-                dst_coord=dst_coord,
-            )
-            edge_records.append(
-                {
-                    "src": src_idx,
-                    "dst": dst_idx,
-                    "dist_raw": edge_dist_raw,
-                    "seqsep": edge_seqsep,
-                    "same_chain": edge_same_chain,
-                    "vector_raw": vector_raw,
-                    "interaction_type": one_hot_index(
-                        RING_INTERACTION_TO_INDEX[interaction],
-                        len(INTERACTION_SUMMARIES_OPTIONAL_WITH_RING),
-                    ),
-                    "source_type": one_hot_index(
-                        EDGE_SOURCE_TO_INDEX["ring"],
-                        len(EDGE_SOURCE_TYPES),
-                    ),
-                }
-            )
+            if src_is_residue and dst_is_metal:
+                residue_idx = residue_to_index[src_key]
+                residue = pocket.residues[residue_idx]
+                residue_coord = resolve_ring_endpoint_coord(residue, row.get("Atom1", ""))
+                metal_coord = metal_site_coord_map.get(dst_key)
+                if metal_coord is None:
+                    continue
+                if residue_coord is None:
+                    continue
+                append_edge_record(
+                    src_idx=residue_idx,
+                    dst_idx=residue_idx,
+                    interaction=interaction,
+                    src_coord=residue_coord,
+                    dst_coord=metal_coord.float(),
+                )
+                continue
+
+            if dst_is_residue and src_is_metal:
+                residue_idx = residue_to_index[dst_key]
+                residue = pocket.residues[residue_idx]
+                residue_coord = resolve_ring_endpoint_coord(residue, row.get("Atom2", ""))
+                metal_coord = metal_site_coord_map.get(src_key)
+                if metal_coord is None:
+                    continue
+                if residue_coord is None:
+                    continue
+                append_edge_record(
+                    src_idx=residue_idx,
+                    dst_idx=residue_idx,
+                    interaction=interaction,
+                    src_coord=residue_coord,
+                    dst_coord=metal_coord.float(),
+                )
 
     return edge_records
 
@@ -256,5 +334,7 @@ __all__ = [
     "closest_points_between_residues",
     "radius_edge_records_from_index",
     "residue_atom_coords",
+    "RING_EDGE_SYMMETRY_POLICY",
+    "RING_METAL_CONTACT_POLICY",
     "stack_edge_features",
 ]

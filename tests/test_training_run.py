@@ -71,6 +71,10 @@ class TrainConfigParsingTests(unittest.TestCase):
                 "--split-by",
                 "structure_id",
                 "--allow-missing-esm-embeddings",
+                "--unsupported-metal-policy",
+                "skip",
+                "--selection-metric",
+                "val_loss",
             ]
         )
 
@@ -81,6 +85,8 @@ class TrainConfigParsingTests(unittest.TestCase):
         self.assertEqual(config.split_by, "structure_id")
         self.assertFalse(config.require_esm_embeddings)
         self.assertTrue(config.require_external_features)
+        self.assertEqual(config.unsupported_metal_policy, "skip")
+        self.assertEqual(config.selection_metric, "val_loss")
 
 
 class TrainingSplitTests(unittest.TestCase):
@@ -148,6 +154,8 @@ class DatasetSummaryTests(unittest.TestCase):
         self.assertEqual(summary["n_train_pockets"], 1)
         self.assertEqual(summary["n_val_pockets"], 1)
         self.assertEqual(summary["split_by"], "pdbid")
+        self.assertEqual(summary["selection_metric"], "val_joint_balanced_acc")
+        self.assertEqual(summary["unsupported_metal_policy"], "error")
         self.assertEqual(summary["train_metal_distribution"]["Zn"], 1)
         self.assertEqual(summary["val_metal_distribution"]["Co/Fe/Ni"], 1)
         self.assertEqual(summary["train_feature_coverage"]["esm_residue_coverage"], 1.0)
@@ -164,8 +172,18 @@ class TrainingLoopHistoryTests(unittest.TestCase):
     ) -> None:
         def metrics_side_effect(model, loader, device, prefix):
             if prefix == "train":
-                return {"train_loss": 0.11, "train_metal_acc": 0.8, "train_ec_acc": 0.6}
-            return {"val_loss": 0.4, "val_metal_acc": 0.7, "val_ec_acc": 0.5}
+                return {
+                    "train_loss": 0.11,
+                    "train_metal_acc": 0.8,
+                    "train_ec_acc": 0.6,
+                    "train_joint_balanced_acc": 0.7,
+                }
+            return {
+                "val_loss": 0.4,
+                "val_metal_acc": 0.7,
+                "val_ec_acc": 0.5,
+                "val_joint_balanced_acc": 0.65,
+            }
 
         mock_evaluate_split_metrics.side_effect = metrics_side_effect
 
@@ -182,7 +200,7 @@ class TrainingLoopHistoryTests(unittest.TestCase):
             model=model,
             optimizer=optimizer,
         )
-        config = parse_args(["--epochs", "1"])
+        config = parse_args(["--epochs", "1", "--selection-metric", "val_joint_balanced_acc"])
 
         history, best_checkpoint = train_and_select_checkpoint(prepared, config)
 
@@ -191,6 +209,8 @@ class TrainingLoopHistoryTests(unittest.TestCase):
         self.assertEqual(history[0]["train_ec_acc"], 0.6)
         self.assertIsNotNone(best_checkpoint)
         self.assertEqual(best_checkpoint["epoch"], 1)
+        self.assertEqual(best_checkpoint["selection_metric"], "val_joint_balanced_acc")
+        self.assertEqual(best_checkpoint["selection_metric_value"], 0.65)
 
 
 if __name__ == "__main__":

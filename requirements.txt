@@ -1,0 +1,5 @@
+torch==2.5.1
+torch-geometric==2.7.0
+biopython==1.87
+pytest>=8,<9
+gemmi>=0.7

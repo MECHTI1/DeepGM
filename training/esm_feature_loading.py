@@ -63,6 +63,41 @@ def deserialize_residue_ids(raw_residue_ids: List[Any]) -> List[ResidueKey]:
     return residue_ids
 
 
+def serialize_residue_ids(residue_ids: List[ResidueKey]) -> List[dict[str, Any]]:
+    return [
+        {
+            "chain_id": normalize_chain_id(chain_id),
+            "resseq": int(resseq),
+            "icode": normalize_icode(icode),
+        }
+        for chain_id, resseq, icode in residue_ids
+    ]
+
+
+def build_embedding_payload(
+    embeddings: Tensor,
+    residue_ids: List[ResidueKey],
+    *,
+    structure_id: str | None = None,
+    chain_id: str | None = None,
+    source_path: str | None = None,
+) -> dict[str, Any]:
+    if embeddings.dim() != 2:
+        raise ValueError(f"Expected a 2D embeddings tensor, got shape {tuple(embeddings.shape)}.")
+    if embeddings.size(0) != len(residue_ids):
+        raise ValueError(
+            f"Embedding payload row count mismatch: got {embeddings.size(0)} rows for {len(residue_ids)} residue ids."
+        )
+    return {
+        "format_version": 2,
+        "structure_id": structure_id,
+        "chain_id": normalize_chain_id(chain_id) if chain_id is not None else None,
+        "source_path": source_path,
+        "residue_ids": serialize_residue_ids(residue_ids),
+        "embeddings": embeddings.float().cpu(),
+    }
+
+
 def embedding_tensor_and_keys_from_payload(
     payload: Any,
     *,
@@ -180,4 +215,7 @@ __all__ = [
     "normalize_chain_id",
     "normalize_icode",
     "residue_keys_for_structure_chain",
+    "build_embedding_payload",
+    "deserialize_residue_ids",
+    "serialize_residue_ids",
 ]

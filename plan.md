@@ -5,311 +5,451 @@
 
 Current model direction:
 - GVP over pocket graphs
-- ESMC residue embeddings with late fusion
-- Pocket/site geometry features such as `v_net`, `v_res`, and `cos(theta)`
+- ESM residue embeddings with graph features
+- Pocket/site geometry features such as `v_net`, `v_res`, and angle-derived terms
 
 ---
 
-## Things Codex Need To Fix
+## Current Code State
 
-### Current Code State
-
-Current main module split:
-- `structure_parsing.py`: structure parsing and metal-pocket extraction
-- `ring_edges.py`: RING path resolution and endpoint parsing
-- `graph_construction.py`: graph assembly and pocket graph export
-- `esm_feature_loading.py`: ESM embedding alignment and loading
-- `training_feature_sources.py`: feature-source orchestration and coverage reporting
-- `training_data.py`: supervised pocket loading and dataset orchestration
+The active runtime path is now organized around:
+- `train.py`
+- `training/config.py`
+- `training/run.py`
+- `training/data.py`
+- `training/structure_loading.py`
+- `training/feature_sources.py`
+- `training/esm_feature_loading.py`
+- `training/site_filter.py`
+- `training/labels.py`
+- `training/graph_dataset.py`
+- `training/loop.py`
+- `training/preflight.py`
+- `training/splits.py`
+- `graph/construction.py`
+- `graph/structure_parsing.py`
+- `graph/edge_building.py`
+- `graph/feature_utils.py`
+- `graph/ring_edges.py`
+- `model.py`
 
 Cleanup status:
-- The major oversized modules were split into smaller focused files.
-- The code structure is now in a good enough state for functional work.
-- Further refactoring is optional and should only happen if new features force it.
+- The oversized training/data logic was split into focused modules.
+- The training loop, split logic, and graph-dataset logic are now separated cleanly.
+- The current structure is good enough for feature work and experiments.
+- Further refactoring should be driven by concrete needs, not style alone.
 
-### 1. Wire the real feature pipeline into training
+---
+
+## Completed Recently
+
+### 1. Real feature loading is wired into training
 
 Status:
-- Done at the code and validation level.
+- Done.
 
-What was implemented:
-- `training_data.py` now loads real ESM embeddings during pocket loading.
-- `training_data.py` now loads real residue-level external features from the MAHOMES per-structure directories.
-- The loader now distinguishes strict mode from fallback mode:
-  - strict mode fails fast when required ESM or external features are missing
-  - fallback mode is only used when explicitly allowed
-- Feature coverage is now recorded in the training metadata:
-  - residue and pocket coverage for ESM embeddings
-  - residue and pocket coverage for external features
-  - feature fallback records
-- Residues now track whether their ESM and external features were actually attached.
-- Auxiliary PDB files inside MAHOMES feature folders are excluded from the structure scan so structures are not double-counted.
+What is in place:
+- Training loads real ESM embeddings during pocket loading.
+- Training loads real residue-level external features from the feature directories.
+- Strict mode fails fast for missing required ESM or external features.
+- Dataset summaries include feature coverage and feature fallback reporting.
+- Auxiliary structure files are excluded from structure scanning to avoid double counting.
 
-Current behavior:
-- Training no longer silently runs with zero-filled ESM/external features by default.
-- `train.py` exposes:
-  - `--esm-embeddings-dir`
-  - `--external-features-root-dir`
-  - `--allow-missing-esm-embeddings`
-  - `--allow-missing-external-features`
-- Run metadata now includes feature coverage and fallback reporting in `dataset_summary.json`.
+Validation:
+- Covered by `tests/test_training_data_loading.py`.
 
-Validation completed:
-- Added focused tests in `tests/test_training_data_loading.py`.
-- Verified ESM tensor-to-residue alignment on a known MAHOMES sample.
-- Verified that the training loader attaches real ESM and external features.
-- Verified that strict mode raises when required ESM embeddings are missing.
-- The new tests passed in the local `.venv`.
+---
 
-Definition of done:
-- `load_training_pockets_with_report_from_dir()` returns pockets with real `esm_embedding` and `external_features` data attached when those inputs exist.
-- Strict mode now prevents accidental training on silently zero-filled feature inputs.
+### 2. Core training orchestration is cleaner
+
+Status:
+- Done.
+
+What changed:
+- Training orchestration lives in `training/run.py`.
+- Split logic lives in `training/splits.py`.
+- Epoch/train/eval helpers live in `training/loop.py`.
+- Early run validation and graphability checks now live in `training/preflight.py`.
+- Graph dataset and normalization logic live in `training/graph_dataset.py`.
+- A regression around recorded `train_loss` was fixed and tested.
+
+Validation:
+- Covered by `tests/test_training_run.py`.
+
+---
+
+### 3. Active metal label space is aligned with the current dataset
+
+Status:
+- Done at the current policy level.
+
+What is in place:
+- Active classes are now:
+  - `Zn`
+  - `Cu`
+  - merged `Co/Fe/Ni`
+- The active classifier label space no longer includes the old unused `Mn` class.
+- Label mapping tests exist.
+
+Current policy:
+- Unsupported metals are now handled explicitly through runtime policy:
+  - `error`
+  - `skip`
 
 Remaining note:
-- Step 2 is still needed to clean up the ESM artifact format itself. Step 1 currently supports the existing tensor-only files via alignment heuristics, which is sufficient for validation but not the final clean design.
+- An `other` class is still a later design choice, not a current requirement.
+
+Validation:
+- Covered by `tests/test_label_schemes.py`.
+
+---
+
+### 4. Basic automated tests now exist
+
+Status:
+- Done at the baseline level.
+
+Current state:
+- The repo has a real `unittest` test suite under `tests/`.
+- Current passing baseline is 32 tests.
+- Coverage exists for:
+  - label mapping
+  - site filtering helpers
+  - training data loading
+  - graph helper behavior
+  - split/reporting logic in training
+  - one end-to-end graph-to-model smoke path
+  - graph construction at the runtime boundary
+  - normalization behavior
+  - clustered-metal extraction
+  - RING ingestion behavior
+
+Current standard command:
+- `./.venv/bin/python -m unittest discover -s tests`
+
+---
+
+### 5. Repo-level dependency bootstrap exists
+
+Status:
+- First pass done.
+
+What is in place:
+- `requirements.txt` now defines the core runtime/test dependencies.
+- `README.md` now gives a short setup and test path.
+
+Remaining gap:
+- This still needs one clean environment recreation check from scratch.
+
+---
+
+## What Still Needs Work And Why
+
+The project no longer needs broad cleanup for elegance.
+
+What it does need now is narrower and more practical:
+- protect the data/model contracts that can break silently
+- make environment setup reproducible for someone new to the repo
+- remove format ambiguity in the embedding artifacts
+- tighten experiment safety before longer training runs
+
+That means the remaining work is mostly about correctness, reproducibility, and clearer failure modes, not another structural rewrite.
+
+---
+
+## Open Work
+
+### 1. End-to-end smoke test for graph -> model forward
+
+Status:
+- Done.
+
+What is in place:
+- A smoke test now builds a real `PocketGraphDataset`.
+- It batches graphs with the PyG `DataLoader`.
+- It runs `GVPPocketClassifier.forward()`.
+- It asserts `logits_metal`, `logits_ec`, `embed`, and `loss`.
+
+Why it was needed:
+- This is the most fragile runtime boundary after a refactor.
+- It protects tensor names, tensor shapes, batching behavior, and supervised-loss wiring.
+
+Validation:
+- Covered by `tests/test_model_smoke.py`.
 
 ---
 
 ### 2. Fix the ESM embedding artifact format
 
 Status:
-- Still open.
+- Done in code.
 
-Problem:
-- The embedding writer saves one tensor per chain.
-- The training code expects a lookup keyed by residue identity `(chain_id, resseq, icode)`.
-- These formats are not compatible.
+What is now in place:
+- The canonical saved payload includes explicit `residue_ids`.
+- The loader can read the canonical payload directly.
+- The embedding writer now emits the canonical payload format.
+- Round-trip coverage exists for canonical write/load alignment.
 
-Tasks:
-- Redesign the embedding save format so each file contains:
-  - structure id
-  - chain id
-  - residue order / residue ids
-  - embedding tensor aligned to those residue ids
-- Add a loader that converts the saved artifact into the lookup expected by `attach_esm_embeddings()`.
-- Verify residue order alignment between BioPython parsing and the saved embedding artifact.
-- Decide on one canonical location and naming scheme for embedding files and document it.
+What still remains:
+- Regenerate or migrate the full embedding artifact set for the real dataset.
+- Confirm the full-dataset artifact inventory is complete before baseline training.
 
 Definition of done:
-- Embeddings written by `embed_helpers/esmc.py` can be loaded directly into the training pipeline without ad hoc conversion.
-- Residue-id alignment is tested and deterministic.
-
-Validation:
-- Add a round-trip test: write sample embedding metadata, load it back, and assert the lookup keys and tensor lengths match the parsed residues.
+- The normal path uses the canonical residue-aligned payload.
+- Residue-id alignment is deterministic and tested.
 
 ---
 
-### 3. Fix RING edge ingestion
-
-Status:
-- Still open.
-
-Problem:
-- Residue-metal `METAL_ION:SC_LIG` interactions from RING are currently discarded.
-- RING edges are currently added in only one direction, while the radius graph is effectively bidirectional.
-
-Tasks:
-- Decide how metal-contact information should enter the graph:
-  - as residue-residue edges with metal-contact flags, or
-  - as explicit residue-metal relations/features
-- Update `build_ring_interaction_edge_records()` so metal-contact information is not silently dropped.
-- Symmetrize RING residue-residue edges during ingest unless there is a clear reason to keep them directional.
-- Add graph-level reporting:
-  - number of radius edges
-  - number of RING residue-residue edges
-  - number of residue-metal RING contacts recovered
-  - number of duplicated / mirrored edges
-
-Definition of done:
-- Important RING chemistry is preserved in the graph representation.
-- Edge direction policy is explicit and consistent.
-
-Validation:
-- Add a fixture using the sample `1a0e` RING file and assert:
-  - `METAL_ION:SC_LIG` rows are accounted for
-  - reverse edges exist when symmetry is expected
+Why this still matters:
+- The code path is now correct.
+- The remaining risk is operational: whether the full artifact set has actually been produced.
 
 ---
 
-### 4. Fix and document the metal label scheme
+### 3. Fix RING edge ingestion and symmetry policy
 
 Status:
-- Partially done.
+- Done in a first explicit policy pass.
 
-What is done:
-- The active metal label space now matches the current catalytic summary:
-  - `Zn`
-  - `Cu`
-  - merged `Co/Fe/Ni`
-- The unused `Mn` class was removed from the active classifier label space.
-- Added tests in `tests/test_label_schemes.py` to verify:
-  - the active metal label mapping
-  - the supported symbol-to-class mapping
-  - that the current summary CSV has no `Mn` rows
+What is now in place:
+- Residue-residue RING edges are ingested with an explicit bidirectional policy.
+- `METAL_ION:SC_LIG` rows are preserved instead of being silently dropped.
+- The current metal-contact policy is explicit in code.
+- Runtime-boundary tests cover the new behavior.
 
-Problem:
-- The current summary file contains `CO`, `CU`, `FE`, `NI`, and `ZN`.
-- The current classifier exposes a `Mn` class that is not present in the current training summary.
-- Unsupported metal symbols currently raise hard errors.
-
-Tasks:
-- Decide the actual supervised metal taxonomy for the current dataset.
-- Remove classes that are not present in the active training set, or switch to a configuration-driven label space.
-- Decide how to handle unsupported metals:
-  - skip with logging
-  - map to `other`
-  - fail only in strict mode
-- Add a dataset label report before training starts.
+Current policy:
+- Residue-residue RING edges are mirrored.
+- Residue-metal contacts are represented as residue self-loop RING signals.
 
 Definition of done:
-- The model head dimensions, label names, and dataset contents all agree.
-- Loading does not crash unexpectedly when a structure contains a metal outside the active taxonomy.
+- Important RING chemistry is preserved.
+- Edge direction behavior is explicit and validated.
 
-Validation:
-- Add a test that checks the label mapping against the current summary CSV distribution.
-- Add a test for unsupported metal handling in strict and non-strict modes.
+Why this still matters:
+- This is about graph semantics, not code style.
+- If edge meaning is wrong or inconsistent, model quality and interpretation both suffer.
+
+Remaining note:
+- The main remaining question is experimental, not structural:
+  - whether the current residue self-loop encoding is the best representation after baseline runs
 
 ---
 
-### 5. Add real test coverage for the data pipeline
+### 4. Add training preflight checks and stronger reporting
 
 Status:
-- Partially done.
+- Done in a first strong pass.
 
-What is done:
-- Added focused tests in `tests/test_training_data_loading.py`.
-- Verified:
-  - ESM alignment from saved tensor files to residue ids
-  - loader attachment of ESM and external features
-  - strict failure when required ESM embeddings are missing
-
-What is still missing:
-- broader tests for graph construction
-- summary/site filtering tests
-- metal clustering tests
-- normalization tests
-- a small model forward-pass smoke test
-
-Problem:
-- The repo has effectively no automated tests.
-- `experiments/test_parsing_pdb.py` is empty.
-- Current changes to graph construction or label parsing can regress silently.
-
-Tasks:
-- Replace the empty parsing test with real unit tests.
-- Add coverage for:
-  - structure id parsing
-  - site filtering against the summary CSV
-  - pocket extraction around clustered metals
-  - node feature construction
-  - graph edge construction
-  - normalization stats shape/behavior
-- Add one small end-to-end smoke test that builds a graph and runs one forward pass through the model.
-
-Definition of done:
-- Core data and graph logic is covered by repeatable tests.
-- The repo has a standard test command that can run in one step.
-
-Validation:
-- `pytest` runs successfully in the intended environment and covers the core loader/graph/model path.
-
----
-
-### 6. Add environment and dependency reproducibility
-
-Status:
-- Partially done locally, not done at the repo level.
-
-What is done:
-- A working local `.venv` was used to run the new validation tests.
-- The local validation environment now includes `torch` CPU, `torch_geometric`, and `biopython`.
-
-What is still missing:
-- a committed dependency manifest
-- setup instructions in the repo
-- a standard one-command environment bootstrap
-
-Problem:
-- There is no dependency manifest in the repo.
-- Local validation currently fails because the environment is missing `torch` and `pytest`.
-
-Tasks:
-- Add one canonical environment definition:
-  - `pyproject.toml`, or
-  - `requirements.txt`, or
-  - `environment.yml`
-- List the required runtime and dev dependencies explicitly.
-- Document how to set up the environment and run tests/training.
-- Make sure the chosen environment includes `torch`, `torch_geometric`, `biopython`, and `pytest`.
-
-Definition of done:
-- A fresh environment can be created without guessing package versions.
-- Test and training commands are documented and reproducible.
-
-Validation:
-- Recreate the environment from scratch and run the test suite plus one smoke-test training command.
-
----
-
-### 7. Improve training-time reporting and safety checks
-
-Status:
-- Partially done.
-
-What is done:
-- dataset summaries now include feature coverage
-- training metadata now records feature fallback information
-- strict loading now fails fast for required features
-
-What is still missing:
-- stronger label-distribution reporting
-- split leakage checks
-- explicit preflight checks for training viability
-- better experiment metrics beyond raw accuracy
-
-Problem:
-- Several important dataset and experiment assumptions are implicit.
-- The code has TODOs for metrics and reporting, but not enough checks for real experiments yet.
-
-Tasks:
-- Add dataset summary reporting for:
-  - label distributions
-  - feature coverage
-  - pockets removed for missing labels/features
-  - split leakage risk by selected grouping key
-- Add a preflight check before training starts:
-  - non-empty train/val
-  - expected head label coverage
-  - feature availability
-  - edge coverage
-- Decide and implement the primary evaluation metrics:
-  - accuracy
+What is already present:
+- Dataset summaries already include feature coverage and label distributions.
+- A first-pass preflight report now exists and is attached to the dataset summary.
+- Early checks now cover empty splits, empty-residue pockets, and graph construction across all train and validation pockets.
+- Leakage checks now exist for the selected split key.
+- Label-viability checks now fail early.
+- Feature-viability coverage is included in the preflight report.
+- Stronger saved metrics now include:
   - balanced accuracy
   - macro-F1
   - per-class recall
+- Checkpoint selection metric is now explicit and configurable.
+
+What is still missing:
+- real baseline evidence that the chosen selection metric and loss policy are the right defaults
+
+Remaining task:
+- Confirm the chosen model-selection metric against the first real baseline.
 
 Definition of done:
-- Training failures happen early and clearly.
-- Saved run artifacts are sufficient to understand what the model actually trained on.
+- Training fails early and clearly on bad inputs.
+- Saved run artifacts are enough to interpret the experiment.
 
-Validation:
-- Run one training job and confirm the saved metadata captures split, labels, feature coverage, and metrics.
+Why this still matters:
+- The code now fails earlier than before, which is good.
+- But experiments can still fail late or produce hard-to-interpret artifacts if preflight remains too shallow.
+
+Current note:
+- The remaining uncertainty is now mostly about experiment choice, not missing safety code.
 
 ---
 
-## Later / Optional
+### 5. Expand test coverage around graph construction
 
-- Evaluate whether supervised contrastive loss helps after the baseline is correct.
-- Revisit alternative replacements or complements to BLUUES-derived features.
-- Expand the dataset creation flow for predicted enzymatic/non-enzymatic sites only after the current supervised pipeline is reliable.
+Status:
+- Done at the current must-have level.
+
+What is now covered:
+- pocket extraction around clustered metals
+- graph construction at the `pocket_to_pyg_data()` level
+- normalization stats behavior
+- RING ingestion behavior
+
+Definition of done:
+- Core graph-building logic is covered by repeatable tests, not just helper-level tests.
+
+Why this still matters:
+- Current tests are good enough for baseline confidence.
+- They are not yet enough to fully protect the structure-parsing and graph-building path.
+
+---
+
+### 6. Move from `requirements.txt` to a fuller packaging story later
+
+Status:
+- Optional later.
+
+What is already good enough now:
+- `requirements.txt` is sufficient for bootstrapping the current repo.
+- `README.md` gives a short setup and test path.
+
+What may be cleaner later:
+- a `pyproject.toml`
+- separated dev/runtime dependency groups
+- one reproducible environment recreation check
+
+Why this is later, not urgent:
+- The current repo needed an explicit dependency manifest more than it needed a perfect packaging design.
+- `requirements.txt` solves the immediate reproducibility gap well enough.
 
 ---
 
 ## Recommended Execution Order
 
-1. Fix the ESM artifact format and make it the canonical loader path.
-2. Fix RING edge ingestion and symmetry.
-3. Align the metal label scheme with the real dataset.
-4. Expand tests for graph construction, filtering, and smoke inference.
-5. Add a committed environment/dependency file.
-6. Improve training reporting and experiment checks.
+1. Regenerate or verify the full canonical ESM artifact set.
+2. Run one baseline training job on the catalytic-only set.
+3. Hand-check summary-to-pocket mapping on a small sample.
+4. Confirm the model-selection metric and loss policy from baseline evidence.
+5. Decide later whether to replace `requirements.txt` with `pyproject.toml`.
+
+---
+
+## Current Validation Snapshot
+
+Date:
+- 2026-04-13
+
+What was checked now:
+- The current `unittest` suite passes:
+  - 32 tests
+- Strict catalytic loading was probed against the real mounted dataset.
+- Summary-to-pocket matching was hand-checked on a small real sample.
+- `deepgm-py312` was confirmed to have the ESM runtime needed for canonical embedding generation.
+- Canonical ESM artifacts were generated successfully for sampled real catalytic structures:
+  - `1a0e__chain_A__EC_5.3.1.5`
+  - `1afr__chain_A__EC_1.14.99.6`
+
+What is confirmed:
+- The codebase is stable enough to keep iterating without another broad manual code-review pass first.
+- The catalytic summary-site matching is behaving correctly on sampled structures.
+- External residue-feature directories are present for sampled real structures.
+- Canonical ESM generation works from the current machine in `deepgm-py312`.
+- Newly generated canonical artifacts are picked up by the strict training loader.
+
+Current blocker:
+- The remaining blocker is not generation logic, but incomplete inventory in the runtime embeddings directory.
+- Current snapshot:
+  - runtime embeddings in `.data/embeddings`: 3 files
+  - sampled real catalytic structures generated successfully: 2
+- The full catalytic set still does not have the canonical inventory needed for baseline training.
+
+What this means:
+- The next real blocker is operational data availability, not missing training-path code.
+- A full baseline run should wait for the canonical ESM inventory to exist in the runtime embeddings location.
+
+Practical conclusion:
+- Do not spend time manually rereading the whole codebase before continuing.
+- Use the built-in checks first, then only inspect code manually if one of those checks fails.
+
+---
+
+## Must Do Now
+
+### A. Must Implement In Code Now
+
+These were the code changes that had to land before longer training runs or new feature work.
+They are now done at the current required level:
+
+1. Canonicalize the ESM embedding artifact format.
+   - Done in code.
+
+2. Fix RING metal-contact ingestion and make edge symmetry policy explicit.
+   - Done in code.
+
+3. Strengthen training preflight and experiment reporting.
+   - Done in code.
+
+4. Make unsupported metal handling an explicit policy.
+   - Done in code for `error` and `skip`.
+
+5. Expand graph-construction tests at the real runtime boundaries.
+   - Done at the current must-have level.
+
+Remaining code question:
+- Done.
+- The current final baseline policy is:
+  - class-balanced cross-entropy on both heads
+  - equal task weights for metal and EC losses
+- This is now explicit in `model.py`.
+
+### B. Must Validate Experimentally Now
+
+These are not architecture tasks, but they are still required now for safe iteration:
+
+1. Verify or regenerate the full canonical ESM artifact inventory.
+   - This is the active blocker right now.
+   - The code path is ready and generation was validated from `deepgm-py312`.
+   - What remains is to run the batch generation across the real dataset until the runtime embeddings inventory is complete.
+   - Current generation entry point:
+     - `embed_helpers/esmc.py`
+
+2. Run one baseline training job on the catalytic-only training set.
+   - Record the first reference metrics.
+   - This should happen immediately after item 1, not before.
+
+3. Hand-check summary-to-pocket mapping on a small sample.
+   - Verify that the catalytic-only summary rows match the pockets that are actually retained.
+   - A first manual sample check was done and looked correct.
+
+4. Record retained dataset counts before training.
+   - Number of retained catalytic pockets.
+   - Class distributions after filtering and splitting.
+   - Best done by the runtime loaders/preflight path once the ESM inventory is in place.
+
+5. Confirm that the chosen validation metric is the right one for model selection.
+   - The code now supports explicit selection.
+   - The remaining question is whether the default should stay as-is after the first baseline.
+
+6. Validate the now-explicit loss policy on the first real baseline.
+   - Current policy:
+     - class-balanced CE for metal
+     - class-balanced CE for EC
+     - equal task weights
+   - Revisit only if the first real baseline shows a clear failure mode.
+
+### C. Can Wait
+
+These are useful, but they are not the current blockers:
+
+1. Replace `requirements.txt` with a fuller packaging story.
+   - `pyproject.toml`
+   - dev/runtime dependency groups
+   - cleaner environment management
+
+2. Additional cleanup not driven by correctness, reproducibility, or experiment safety.
+   - The codebase is already structured well enough for active work.
+
+3. Loss redesign beyond the first baseline-supported decision.
+   - Do not optimize the loss policy further before baseline evidence exists.
+
+---
+
+## Bottom Line
+
+The project is not in a "harsh" state.
+
+The code is now structured well enough for real work, and the main must-do-now code items are in place.
+
+The best next steps are now operational and experimental rather than architectural:
+- finish generating the canonical ESM artifacts into the runtime embeddings location
+- rerun the retained-dataset/preflight path on the real catalytic set
+- run and record the first baseline
+- use that baseline to confirm checkpoint selection and validate the chosen loss policy

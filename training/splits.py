@@ -108,6 +108,8 @@ def build_dataset_summary(
         "n_val_pockets": len(split.val_pockets),
         "val_fraction": config.val_fraction,
         "split_by": config.split_by,
+        "selection_metric": config.selection_metric,
+        "unsupported_metal_policy": config.unsupported_metal_policy,
         "feature_load_report": feature_load_report,
         "train_feature_coverage": build_pocket_feature_coverage(split.train_pockets),
         "val_feature_coverage": build_pocket_feature_coverage(split.val_pockets),

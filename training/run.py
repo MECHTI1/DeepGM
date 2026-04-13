@@ -20,9 +20,11 @@ from training.graph_dataset import FeatureNormalizationStats, PocketGraphDataset
 from training.loop import (
     accuracy_from_logits,
     balanced_class_weights_from_pockets,
+    classification_metrics_from_logits,
     evaluate_epoch_with_predictions,
     train_epoch,
 )
+from training.preflight import run_preflight_checks
 from training.splits import PocketSplit, build_dataset_summary, split_pockets
 
 
@@ -84,11 +86,61 @@ def evaluate_split_metrics(model, loader: DataLoader | None, device: str, prefix
         return {}
 
     predictions = evaluate_epoch_with_predictions(model, loader, device=device)
-    return {
+    payload = {
         f"{prefix}_loss": predictions["loss"],
-        f"{prefix}_metal_acc": accuracy_or_none(predictions, "metal_logits", "metal_y"),
-        f"{prefix}_ec_acc": accuracy_or_none(predictions, "ec_logits", "ec_y"),
     }
+    if "metal_y" in predictions:
+        metal_metrics = classification_metrics_from_logits(predictions["metal_logits"], predictions["metal_y"])
+        payload.update(
+            {
+                f"{prefix}_metal_acc": metal_metrics["accuracy"],
+                f"{prefix}_metal_balanced_acc": metal_metrics["balanced_accuracy"],
+                f"{prefix}_metal_macro_f1": metal_metrics["macro_f1"],
+                f"{prefix}_metal_per_class_recall": {
+                    label_name: metal_metrics["per_class_recall"][label_idx]
+                    for label_idx, label_name in METAL_TARGET_LABELS.items()
+                },
+            }
+        )
+    else:
+        payload[f"{prefix}_metal_acc"] = None
+    if "ec_y" in predictions:
+        ec_metrics = classification_metrics_from_logits(predictions["ec_logits"], predictions["ec_y"])
+        payload.update(
+            {
+                f"{prefix}_ec_acc": ec_metrics["accuracy"],
+                f"{prefix}_ec_balanced_acc": ec_metrics["balanced_accuracy"],
+                f"{prefix}_ec_macro_f1": ec_metrics["macro_f1"],
+                f"{prefix}_ec_per_class_recall": {
+                    label_name: ec_metrics["per_class_recall"][label_idx]
+                    for label_idx, label_name in EC_TOP_LEVEL_LABELS.items()
+                },
+            }
+        )
+    else:
+        payload[f"{prefix}_ec_acc"] = None
+
+    balanced_values = [
+        value
+        for value in (
+            payload.get(f"{prefix}_metal_balanced_acc"),
+            payload.get(f"{prefix}_ec_balanced_acc"),
+        )
+        if value is not None
+    ]
+    macro_f1_values = [
+        value
+        for value in (
+            payload.get(f"{prefix}_metal_macro_f1"),
+            payload.get(f"{prefix}_ec_macro_f1"),
+        )
+        if value is not None
+    ]
+    if balanced_values:
+        payload[f"{prefix}_joint_balanced_acc"] = float(sum(balanced_values) / len(balanced_values))
+    if macro_f1_values:
+        payload[f"{prefix}_joint_macro_f1"] = float(sum(macro_f1_values) / len(macro_f1_values))
+    return payload
 
 
 def normalization_stats_payload(normalization_stats: FeatureNormalizationStats) -> dict[str, Any]:
@@ -135,7 +187,22 @@ def format_epoch_log(record: dict[str, Any]) -> str:
         parts.append(f"val_metal_acc={record['val_metal_acc']:.4f}")
     if record.get("val_ec_acc") is not None:
         parts.append(f"val_ec_acc={record['val_ec_acc']:.4f}")
+    if record.get("val_joint_balanced_acc") is not None:
+        parts.append(f"val_joint_bal_acc={record['val_joint_balanced_acc']:.4f}")
+    if record.get("val_joint_macro_f1") is not None:
+        parts.append(f"val_joint_macro_f1={record['val_joint_macro_f1']:.4f}")
     return " ".join(parts)
+
+
+def metric_sort_value(record: dict[str, Any], selection_metric: str) -> tuple[float, bool]:
+    if selection_metric not in record or record[selection_metric] is None:
+        if "val_loss" in record and record["val_loss"] is not None:
+            return float(record["val_loss"]), False
+        raise ValueError(f"Selection metric {selection_metric!r} is missing from the epoch record.")
+    metric_value = float(record[selection_metric])
+    if selection_metric == "val_loss":
+        return metric_value, False
+    return metric_value, True
 
 
 def prepare_run(config: TrainConfig) -> PreparedRun:
@@ -149,6 +216,7 @@ def prepare_run(config: TrainConfig) -> PreparedRun:
         require_esm_embeddings=config.require_esm_embeddings,
         external_features_root_dir=config.external_features_root_dir,
         require_external_features=config.require_external_features,
+        unsupported_metal_policy=config.unsupported_metal_policy,
     )
     pockets = load_result.pockets
     if not pockets:
@@ -160,12 +228,17 @@ def prepare_run(config: TrainConfig) -> PreparedRun:
         split_by=config.split_by,
         seed=config.seed,
     )
-    run_dir = build_run_dir(config)
     dataset_summary = build_dataset_summary(
         split,
         config,
         feature_load_report=load_result.feature_report,
     )
+    dataset_summary["preflight"] = run_preflight_checks(
+        split,
+        config,
+        feature_load_report=load_result.feature_report,
+    )
+    run_dir = build_run_dir(config)
     normalization_stats = PocketGraphDataset.fit_normalization_stats(
         split.train_pockets,
         esm_dim=config.esm_dim,
@@ -214,7 +287,7 @@ def train_and_select_checkpoint(
     config: TrainConfig,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     history: list[dict[str, Any]] = []
-    best_metric = float("inf")
+    best_metric: float | None = None
     best_checkpoint = None
     for epoch in range(1, config.epochs + 1):
         train_loss = train_epoch(prepared.model, prepared.train_loader, prepared.optimizer, device=config.device)
@@ -228,17 +301,26 @@ def train_and_select_checkpoint(
 
         val_metrics = evaluate_split_metrics(prepared.model, prepared.val_loader, config.device, prefix="val")
         record.update(val_metrics)
-        if val_metrics and val_metrics["val_loss"] < best_metric:
-            best_metric = val_metrics["val_loss"]
-            best_checkpoint = checkpoint_payload(
-                model_state_dict=copy.deepcopy(prepared.model.state_dict()),
-                optimizer_state_dict=copy.deepcopy(prepared.optimizer.state_dict()),
-                history=copy.deepcopy(history + [record]),
-                config_payload=prepared.config_payload,
-                normalization_stats=prepared.normalization_stats,
-                dataset_summary=prepared.dataset_summary,
+        if val_metrics:
+            current_metric, maximize = metric_sort_value(record, config.selection_metric)
+            is_better = (
+                best_metric is None
+                or (maximize and current_metric > best_metric)
+                or (not maximize and current_metric < best_metric)
             )
-            best_checkpoint["epoch"] = epoch
+            if is_better:
+                best_metric = current_metric
+                best_checkpoint = checkpoint_payload(
+                    model_state_dict=copy.deepcopy(prepared.model.state_dict()),
+                    optimizer_state_dict=copy.deepcopy(prepared.optimizer.state_dict()),
+                    history=copy.deepcopy(history + [record]),
+                    config_payload=prepared.config_payload,
+                    normalization_stats=prepared.normalization_stats,
+                    dataset_summary=prepared.dataset_summary,
+                )
+                best_checkpoint["epoch"] = epoch
+                best_checkpoint["selection_metric"] = config.selection_metric
+                best_checkpoint["selection_metric_value"] = current_metric
 
         history.append(record)
         print(format_epoch_log(record))
@@ -305,6 +387,7 @@ __all__ = [
     "checkpoint_payload",
     "evaluate_split_metrics",
     "format_epoch_log",
+    "metric_sort_value",
     "persist_run_outputs",
     "prepare_run",
     "run_training",

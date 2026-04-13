@@ -33,6 +33,9 @@ class LabelSchemeTests(unittest.TestCase):
         self.assertEqual(map_site_metal_symbols("FE"), 2)
         self.assertEqual(map_site_metal_symbols("NI"), 2)
 
+    def test_unsupported_symbol_can_be_skipped_explicitly(self) -> None:
+        self.assertIsNone(map_site_metal_symbols("MN", unsupported_policy="skip"))
+
     def test_current_summary_has_no_mn_rows(self) -> None:
         if not SUMMARY_CSV.is_file():
             raise unittest.SkipTest(f"Missing summary CSV: {SUMMARY_CSV}")

@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import torch
 
-from data_structures import PocketRecord, ResidueRecord
-from graph.edge_building import build_pair_edge_geometry, build_radius_graph_from_residues, stack_edge_features
+from data_structures import EDGE_SOURCE_TO_INDEX, PocketRecord, RING_INTERACTION_TO_INDEX, ResidueRecord
+from graph.construction import pocket_to_pyg_data
+from graph.edge_building import (
+    build_pair_edge_geometry,
+    build_radius_graph_from_residues,
+    build_ring_interaction_edge_records,
+    stack_edge_features,
+)
 from graph.feature_utils import attach_esm_embeddings, attach_external_residue_features
+from graph.structure_parsing import MetalAtomRecord, cluster_metal_records
+from training.graph_dataset import apply_feature_normalization, compute_feature_normalization_stats
 
 
 def make_residue(
@@ -15,10 +25,14 @@ def make_residue(
     resseq: int,
     ca: tuple[float, float, float],
     cb: tuple[float, float, float] | None = None,
+    extra_atoms: dict[str, tuple[float, float, float]] | None = None,
 ) -> ResidueRecord:
     atoms = {"CA": torch.tensor(ca, dtype=torch.float32)}
     if cb is not None:
         atoms["CB"] = torch.tensor(cb, dtype=torch.float32)
+    if extra_atoms is not None:
+        for atom_name, coord in extra_atoms.items():
+            atoms[atom_name] = torch.tensor(coord, dtype=torch.float32)
     return ResidueRecord(
         chain_id=chain_id,
         resseq=resseq,
@@ -108,6 +122,127 @@ class GraphEdgeBuildingTests(unittest.TestCase):
         self.assertEqual(tuple(edge_features["edge_dist_raw"].shape), (1, 2))
         self.assertEqual(tuple(edge_features["edge_seqsep"].shape), (1, 1))
         self.assertEqual(tuple(edge_features["edge_source_type"].shape), (1, 2))
+
+    def test_build_ring_interaction_edge_records_symmetrizes_residue_edges_and_keeps_metal_contacts(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=1,
+                ca=(0.0, 0.0, 0.0),
+                cb=(0.8, 0.5, 0.0),
+                extra_atoms={"ND1": (0.4, 0.2, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=2,
+                ca=(0.0, 0.0, 2.0),
+                cb=(0.7, 0.4, 2.1),
+                extra_atoms={"ND1": (0.2, 0.1, 1.5)},
+            ),
+        ]
+        pocket = make_pocket(residues)
+        pocket.metadata["metal_site_coord_map"] = {("A", 500, ""): torch.tensor([0.0, 0.0, 0.8], dtype=torch.float32)}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ring_path = Path(tmpdir) / "sample_ringEdges"
+            ring_path.write_text(
+                "\t".join(["NodeId1", "NodeId2", "Interaction", "Atom1", "Atom2"]) + "\n"
+                + "\t".join(["A:1:_:HIS", "A:2:_:HIS", "HBOND:SC_SC", "ND1", "ND1"]) + "\n"
+                + "\t".join(["A:1:_:HIS", "A:500:_:ZN", "METAL_ION:SC_LIG", "ND1", ""]) + "\n",
+                encoding="utf-8",
+            )
+            pocket.metadata["ring_edges_path"] = str(ring_path)
+
+            edge_records = build_ring_interaction_edge_records(pocket)
+
+        edge_pairs = {(record["src"], record["dst"]) for record in edge_records}
+        interaction_indices = {int(torch.argmax(record["interaction_type"]).item()) for record in edge_records}
+        self.assertEqual(edge_pairs, {(0, 1), (1, 0), (0, 0)})
+        self.assertIn(RING_INTERACTION_TO_INDEX["HBOND:SC_SC"], interaction_indices)
+        self.assertIn(RING_INTERACTION_TO_INDEX["METAL_ION:SC_LIG"], interaction_indices)
+
+    def test_pocket_to_pyg_data_combines_radius_and_ring_edges(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=1,
+                ca=(0.0, 0.0, 0.0),
+                cb=(0.8, 0.5, 0.0),
+                extra_atoms={"ND1": (0.4, 0.2, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=2,
+                ca=(0.0, 0.0, 2.0),
+                cb=(0.7, 0.4, 2.1),
+                extra_atoms={"ND1": (0.2, 0.1, 1.5)},
+            ),
+        ]
+        for residue in residues:
+            residue.esm_embedding = torch.ones(4, dtype=torch.float32)
+            residue.has_esm_embedding = True
+            residue.external_features = {"SASA": 1.0}
+            residue.has_external_features = True
+        pocket = make_pocket(residues)
+        pocket.metadata["metal_site_coord_map"] = {("A", 500, ""): torch.tensor([0.0, 0.0, 0.8], dtype=torch.float32)}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ring_path = Path(tmpdir) / "sample_ringEdges"
+            ring_path.write_text(
+                "\t".join(["NodeId1", "NodeId2", "Interaction", "Atom1", "Atom2"]) + "\n"
+                + "\t".join(["A:1:_:HIS", "A:500:_:ZN", "METAL_ION:SC_LIG", "ND1", ""]) + "\n",
+                encoding="utf-8",
+            )
+            pocket.metadata["ring_edges_path"] = str(ring_path)
+
+            data = pocket_to_pyg_data(pocket, esm_dim=4, edge_radius=3.0)
+
+        ring_mask = data.edge_source_type[:, EDGE_SOURCE_TO_INDEX["ring"]] > 0.5
+        self.assertGreater(int(ring_mask.sum().item()), 0)
+        self.assertIn([0, 0], data.edge_index.t().tolist())
+
+
+class GraphDatasetRuntimeTests(unittest.TestCase):
+    def test_apply_feature_normalization_normalizes_and_clamps(self) -> None:
+        pocket_a = make_pocket(
+            [
+                make_residue(chain_id="A", resseq=1, ca=(0.0, 0.0, 0.0), cb=(1.0, 0.0, 0.0)),
+                make_residue(chain_id="A", resseq=2, ca=(0.0, 0.0, 2.0), cb=(1.0, 0.0, 2.0)),
+            ]
+        )
+        pocket_b = make_pocket(
+            [
+                make_residue(chain_id="A", resseq=3, ca=(5.0, 0.0, 0.0), cb=(6.0, 0.0, 0.0)),
+                make_residue(chain_id="A", resseq=4, ca=(5.0, 0.0, 2.0), cb=(6.0, 0.0, 2.0)),
+            ]
+        )
+        for pocket in (pocket_a, pocket_b):
+            for residue in pocket.residues:
+                residue.esm_embedding = torch.ones(4, dtype=torch.float32)
+                residue.has_esm_embedding = True
+                residue.external_features = {"SASA": 1.0}
+                residue.has_external_features = True
+
+        data_a = pocket_to_pyg_data(pocket_a, esm_dim=4, edge_radius=3.0)
+        data_b = pocket_to_pyg_data(pocket_b, esm_dim=4, edge_radius=3.0)
+        stats = compute_feature_normalization_stats([data_a, data_b], clamp_value=1.0)
+        normalized = apply_feature_normalization(data_b, stats)
+
+        self.assertTrue(torch.all(torch.abs(normalized.x_dist_raw) <= 1.00001))
+        self.assertTrue(torch.all(torch.abs(normalized.edge_dist_raw) <= 1.00001))
+
+
+class StructureParsingTests(unittest.TestCase):
+    def test_cluster_metal_records_merges_close_metal_sites(self) -> None:
+        metal_records = [
+            MetalAtomRecord(coord=torch.tensor([0.0, 0.0, 0.0]), symbol="ZN", site_id=("A", 100, "")),
+            MetalAtomRecord(coord=torch.tensor([3.0, 0.0, 0.0]), symbol="CU", site_id=("A", 101, "")),
+            MetalAtomRecord(coord=torch.tensor([10.0, 0.0, 0.0]), symbol="FE", site_id=("A", 102, "")),
+        ]
+
+        clusters = cluster_metal_records(metal_records, merge_distance=4.5)
+
+        self.assertEqual([len(cluster) for cluster in clusters], [2, 1])
 
 
 if __name__ == "__main__":

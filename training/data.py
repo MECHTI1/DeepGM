@@ -5,7 +5,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from data_structures import PocketRecord
-from training.esm_feature_loading import ResidueKey, load_esm_lookup_for_structure, residue_keys_for_structure_chain
+from training.esm_feature_loading import (
+    ResidueKey,
+    build_embedding_payload,
+    load_esm_lookup_for_structure,
+    residue_keys_for_structure_chain,
+)
 from project_paths import CATALYTIC_ONLY_SUMMARY_CSV, MAHOMES_TRAIN_SET_DIR
 from training.feature_sources import (
     build_pocket_feature_coverage,
@@ -36,6 +41,7 @@ def _assemble_pocket_load_result(
     structure_files: List[Path],
     skipped_structures: List[Dict[str, str]],
     feature_fallbacks: List[Dict[str, str]],
+    skipped_pockets: List[Dict[str, str]],
 ) -> PocketLoadResult:
     return PocketLoadResult(
         pockets=pockets,
@@ -44,6 +50,7 @@ def _assemble_pocket_load_result(
             structure_files=structure_files,
             skipped_structures=skipped_structures,
             feature_fallbacks=feature_fallbacks,
+            skipped_pockets=skipped_pockets,
         ),
     )
 
@@ -58,6 +65,7 @@ def load_labeled_pockets_with_report_from_dir(
     require_esm_embeddings: bool = True,
     external_features_root_dir: str | Path | None = None,
     require_external_features: bool = True,
+    unsupported_metal_policy: str = "error",
 ) -> PocketLoadResult:
     structure_root = Path(structure_dir)
     structure_files = find_structure_files(structure_root)
@@ -74,9 +82,10 @@ def load_labeled_pockets_with_report_from_dir(
     pockets: List[PocketRecord] = []
     skipped_structures: List[Dict[str, str]] = []
     feature_fallbacks: List[Dict[str, str]] = []
+    skipped_pockets: List[Dict[str, str]] = []
 
     for structure_path in structure_files:
-        structure_pockets, structure_fallbacks = load_structure_pockets(
+        structure_pockets, structure_fallbacks, structure_skipped_pockets = load_structure_pockets(
             structure_path=structure_path,
             structure_root=structure_root,
             allowed_site_keys=allowed_site_keys,
@@ -85,11 +94,20 @@ def load_labeled_pockets_with_report_from_dir(
             require_esm_embeddings=require_esm_embeddings,
             feature_root_dir=feature_root_dir,
             require_external_features=require_external_features,
+            unsupported_metal_policy=unsupported_metal_policy,
         )
         feature_fallbacks.extend(structure_fallbacks)
+        skipped_pockets.extend(structure_skipped_pockets)
 
         for pocket in structure_pockets:
             if require_full_labels and not pocket_has_full_supervision(pocket):
+                skipped_pockets.append(
+                    {
+                        "structure_id": pocket.structure_id,
+                        "pocket_id": pocket.pocket_id,
+                        "reason": "missing_full_supervision",
+                    }
+                )
                 continue
             pockets.append(pocket)
             if max_cases is not None and len(pockets) >= max_cases:
@@ -98,6 +116,7 @@ def load_labeled_pockets_with_report_from_dir(
                     structure_files=structure_files,
                     skipped_structures=skipped_structures,
                     feature_fallbacks=feature_fallbacks,
+                    skipped_pockets=skipped_pockets,
                 )
 
     if not pockets:
@@ -110,6 +129,7 @@ def load_labeled_pockets_with_report_from_dir(
         structure_files=structure_files,
         skipped_structures=skipped_structures,
         feature_fallbacks=feature_fallbacks,
+        skipped_pockets=skipped_pockets,
     )
 
 
@@ -123,6 +143,7 @@ def load_labeled_pockets_from_dir(
     require_esm_embeddings: bool = True,
     external_features_root_dir: str | Path | None = None,
     require_external_features: bool = True,
+    unsupported_metal_policy: str = "error",
 ) -> List[PocketRecord]:
     return load_labeled_pockets_with_report_from_dir(
         structure_dir=structure_dir,
@@ -134,6 +155,7 @@ def load_labeled_pockets_from_dir(
         require_esm_embeddings=require_esm_embeddings,
         external_features_root_dir=external_features_root_dir,
         require_external_features=require_external_features,
+        unsupported_metal_policy=unsupported_metal_policy,
     ).pockets
 
 
@@ -146,6 +168,7 @@ def load_training_pockets_from_dir(
     require_esm_embeddings: bool = True,
     external_features_root_dir: str | Path | None = None,
     require_external_features: bool = True,
+    unsupported_metal_policy: str = "error",
 ) -> List[PocketRecord]:
     return load_labeled_pockets_from_dir(
         structure_dir=structure_dir,
@@ -157,6 +180,7 @@ def load_training_pockets_from_dir(
         require_esm_embeddings=require_esm_embeddings,
         external_features_root_dir=external_features_root_dir,
         require_external_features=require_external_features,
+        unsupported_metal_policy=unsupported_metal_policy,
     )
 
 
@@ -169,6 +193,7 @@ def load_training_pockets_with_report_from_dir(
     require_esm_embeddings: bool = True,
     external_features_root_dir: str | Path | None = None,
     require_external_features: bool = True,
+    unsupported_metal_policy: str = "error",
 ) -> PocketLoadResult:
     return load_labeled_pockets_with_report_from_dir(
         structure_dir=structure_dir,
@@ -180,6 +205,7 @@ def load_training_pockets_with_report_from_dir(
         require_esm_embeddings=require_esm_embeddings,
         external_features_root_dir=external_features_root_dir,
         require_external_features=require_external_features,
+        unsupported_metal_policy=unsupported_metal_policy,
     )
 
 
@@ -193,6 +219,7 @@ def load_smoke_test_pockets_from_dir(
     require_esm_embeddings: bool = False,
     external_features_root_dir: str | Path | None = None,
     require_external_features: bool = False,
+    unsupported_metal_policy: str = "error",
 ) -> List[PocketRecord]:
     return load_labeled_pockets_from_dir(
         structure_dir=structure_dir,
@@ -204,6 +231,7 @@ def load_smoke_test_pockets_from_dir(
         require_esm_embeddings=require_esm_embeddings,
         external_features_root_dir=external_features_root_dir,
         require_external_features=require_external_features,
+        unsupported_metal_policy=unsupported_metal_policy,
     )
 
 
@@ -212,6 +240,7 @@ __all__ = [
     "DEFAULT_TRAIN_SUMMARY_CSV",
     "PocketLoadResult",
     "ResidueKey",
+    "build_embedding_payload",
     "build_pocket_feature_coverage",
     "find_structure_files",
     "load_esm_lookup_for_structure",

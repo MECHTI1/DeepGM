@@ -9,6 +9,7 @@ import torch
 
 from graph.construction import parse_structure_file
 from training.data import (
+    build_embedding_payload,
     load_esm_lookup_for_structure,
     load_training_pockets_with_report_from_dir,
     residue_keys_for_structure_chain,
@@ -41,7 +42,7 @@ class TrainingDataLoadingTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
-    def build_sample_embedding_file(self, esm_dim: int = 8) -> Path:
+    def build_sample_embedding_file(self, esm_dim: int = 8, *, canonical: bool = True) -> Path:
         structure = parse_structure_file(str(self.structure_path), structure_id=self.structure_path.stem)
         residue_keys, residue_keys_with_ca = residue_keys_for_structure_chain(structure, "A")
         self.assertGreater(len(residue_keys), 0)
@@ -52,11 +53,21 @@ class TrainingDataLoadingTests(unittest.TestCase):
             dtype=torch.float32,
         ).reshape(len(residue_keys_with_ca), esm_dim) + 1.0
         outpath = self.embeddings_dir / f"{self.structure_path.stem}_chain_A_esmc.pt"
-        torch.save(embedding, outpath)
+        if canonical:
+            payload = build_embedding_payload(
+                embedding,
+                residue_keys_with_ca,
+                structure_id=self.structure_path.stem,
+                chain_id="A",
+                source_path=str(self.structure_path),
+            )
+            torch.save(payload, outpath)
+        else:
+            torch.save(embedding, outpath)
         return outpath
 
     def test_load_esm_lookup_aligns_tensor_file_to_structure_residues(self) -> None:
-        self.build_sample_embedding_file(esm_dim=8)
+        self.build_sample_embedding_file(esm_dim=8, canonical=False)
         structure = parse_structure_file(str(self.structure_path), structure_id=self.structure_path.stem)
 
         esm_lookup = load_esm_lookup_for_structure(
@@ -71,8 +82,23 @@ class TrainingDataLoadingTests(unittest.TestCase):
         self.assertEqual(tuple(esm_lookup[first_key].shape), (8,))
         self.assertGreater(float(esm_lookup[first_key].abs().sum().item()), 0.0)
 
+    def test_load_esm_lookup_round_trips_canonical_payload(self) -> None:
+        self.build_sample_embedding_file(esm_dim=8, canonical=True)
+        structure = parse_structure_file(str(self.structure_path), structure_id=self.structure_path.stem)
+        residue_keys, residue_keys_with_ca = residue_keys_for_structure_chain(structure, "A")
+
+        esm_lookup = load_esm_lookup_for_structure(
+            structure=structure,
+            structure_path=self.structure_path,
+            embeddings_dir=self.embeddings_dir,
+        )
+
+        self.assertEqual(sorted(esm_lookup), sorted(residue_keys_with_ca))
+        self.assertNotEqual(len(residue_keys), 0)
+        self.assertEqual(tuple(esm_lookup[residue_keys_with_ca[0]].shape), (8,))
+
     def test_training_loader_attaches_real_features(self) -> None:
-        self.build_sample_embedding_file(esm_dim=8)
+        self.build_sample_embedding_file(esm_dim=8, canonical=True)
 
         result = load_training_pockets_with_report_from_dir(
             structure_dir=self.structure_root,

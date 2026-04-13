@@ -8,6 +8,16 @@ from typing import Any, Sequence
 from training.data import DEFAULT_STRUCTURE_DIR, DEFAULT_TRAIN_SUMMARY_CSV
 
 SPLIT_BY_CHOICES = ("pdbid", "structure_id", "pocket_id")
+UNSUPPORTED_METAL_POLICY_CHOICES = ("error", "skip")
+SELECTION_METRIC_CHOICES = (
+    "val_loss",
+    "val_joint_balanced_acc",
+    "val_joint_macro_f1",
+    "val_metal_balanced_acc",
+    "val_ec_balanced_acc",
+    "val_metal_macro_f1",
+    "val_ec_macro_f1",
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +41,8 @@ class TrainConfig:
     split_by: str = "pdbid"
     require_esm_embeddings: bool = True
     require_external_features: bool = True
+    unsupported_metal_policy: str = "error"
+    selection_metric: str = "val_joint_balanced_acc"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -55,6 +67,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-missing-esm-embeddings", action="store_true")
     parser.add_argument("--allow-missing-external-features", action="store_true")
     parser.add_argument("--val-fraction", type=float, default=0.0)
+    parser.add_argument(
+        "--unsupported-metal-policy",
+        type=str,
+        default="error",
+        choices=UNSUPPORTED_METAL_POLICY_CHOICES,
+    )
+    parser.add_argument(
+        "--selection-metric",
+        type=str,
+        default="val_joint_balanced_acc",
+        choices=SELECTION_METRIC_CHOICES,
+    )
     parser.add_argument(
         "--split-by",
         type=str,
@@ -87,6 +111,8 @@ def parse_args(argv: Sequence[str] | None = None) -> TrainConfig:
         split_by=args.split_by,
         require_esm_embeddings=not args.allow_missing_esm_embeddings,
         require_external_features=not args.allow_missing_external_features,
+        unsupported_metal_policy=args.unsupported_metal_policy,
+        selection_metric=args.selection_metric,
     )
 
 
@@ -99,7 +125,9 @@ def config_to_payload(config: TrainConfig) -> dict[str, Any]:
 
 __all__ = [
     "SPLIT_BY_CHOICES",
+    "SELECTION_METRIC_CHOICES",
     "TrainConfig",
+    "UNSUPPORTED_METAL_POLICY_CHOICES",
     "build_arg_parser",
     "config_to_payload",
     "parse_args",

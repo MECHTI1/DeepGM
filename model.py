@@ -311,6 +311,17 @@ class GVPPocketClassifier(nn.Module):
             rel = (data.pos[dst] - data.pos[src]).float()
         return rel.unsqueeze(1)
 
+    def _compute_supervised_loss(self, logits_metal: Tensor, logits_ec: Tensor, data: Data) -> Tensor:
+        # Final baseline policy:
+        # - keep class-balanced CE on both heads because both targets are imbalanced
+        # - keep equal task weights so the two supervised objectives remain symmetric
+        # - choose checkpoints with balanced metrics rather than introducing a more complex loss first
+        metal_weights = self.metal_class_weights if self.metal_class_weights.numel() > 0 else None
+        ec_weights = self.ec_class_weights if self.ec_class_weights.numel() > 0 else None
+        metal_loss = F.cross_entropy(logits_metal, data.y_metal, weight=metal_weights)
+        ec_loss = F.cross_entropy(logits_ec, data.y_ec, weight=ec_weights)
+        return self.metal_loss_weight * metal_loss + self.ec_loss_weight * ec_loss
+
     def forward(self, data: Data) -> Dict[str, Tensor]:
         s = self.node_scalar_encoder(
             data.x_reschem,
@@ -368,14 +379,6 @@ class GVPPocketClassifier(nn.Module):
         }
 
         if hasattr(data, "y_metal") and hasattr(data, "y_ec"):
-            # TODO- HERE I need to add the final loss policy after seeing real-data results:
-            # keep weighted CE as-is, or change task weighting / loss design based on baseline validation.
-            metal_weights = self.metal_class_weights if self.metal_class_weights.numel() > 0 else None
-            ec_weights = self.ec_class_weights if self.ec_class_weights.numel() > 0 else None
-            loss = (
-                self.metal_loss_weight * F.cross_entropy(logits_metal, data.y_metal, weight=metal_weights)
-                + self.ec_loss_weight * F.cross_entropy(logits_ec, data.y_ec, weight=ec_weights)
-            )
-            outputs["loss"] = loss
+            outputs["loss"] = self._compute_supervised_loss(logits_metal, logits_ec, data)
 
         return outputs

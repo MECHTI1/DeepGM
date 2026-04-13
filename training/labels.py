@@ -45,13 +45,23 @@ def parse_ec_top_level_from_structure_path(path: Path) -> Optional[int]:
     return top_level - 1
 
 
-def infer_metal_target_class_from_pocket(pocket: PocketRecord) -> Optional[int]:
+def infer_metal_target_class_from_pocket(
+    pocket: PocketRecord,
+    *,
+    unsupported_policy: str = "error",
+) -> Optional[int]:
     observed_symbols = pocket.metadata.get("metal_symbols_observed")
     if isinstance(observed_symbols, list) and observed_symbols:
-        return map_site_metal_symbols(observed_symbols)
+        return map_site_metal_symbols(
+            observed_symbols,
+            unsupported_policy=unsupported_policy,
+        )
 
     metal_element = pocket.metal_element.strip()
     if not metal_element:
         return None
 
-    return map_site_metal_symbols(metal_element)
+    return map_site_metal_symbols(
+        metal_element,
+        unsupported_policy=unsupported_policy,
+    )

@@ -104,10 +104,52 @@ def accuracy_from_logits(logits: Tensor, y: Tensor) -> float:
     return float((pred == y).float().mean().item())
 
 
+@torch.no_grad()
+def classification_metrics_from_logits(logits: Tensor, y: Tensor) -> dict[str, float | list[float | None]]:
+    if y.numel() == 0:
+        raise ValueError("Cannot compute classification metrics for an empty target tensor.")
+
+    pred = logits.argmax(dim=-1)
+    n_classes = int(logits.size(-1))
+    per_class_recall: list[float | None] = []
+    per_class_f1: list[float | None] = []
+
+    for class_idx in range(n_classes):
+        true_mask = y == class_idx
+        pred_mask = pred == class_idx
+        support = int(true_mask.sum().item())
+        predicted = int(pred_mask.sum().item())
+        true_positive = int((true_mask & pred_mask).sum().item())
+
+        if support == 0:
+            per_class_recall.append(None)
+            per_class_f1.append(None)
+            continue
+
+        recall = true_positive / support
+        precision = true_positive / predicted if predicted > 0 else 0.0
+        if precision + recall == 0.0:
+            f1 = 0.0
+        else:
+            f1 = (2.0 * precision * recall) / (precision + recall)
+        per_class_recall.append(float(recall))
+        per_class_f1.append(float(f1))
+
+    present_recalls = [value for value in per_class_recall if value is not None]
+    present_f1 = [value for value in per_class_f1 if value is not None]
+    return {
+        "accuracy": float((pred == y).float().mean().item()),
+        "balanced_accuracy": float(sum(present_recalls) / len(present_recalls)),
+        "macro_f1": float(sum(present_f1) / len(present_f1)),
+        "per_class_recall": per_class_recall,
+    }
+
+
 __all__ = [
     "accuracy_from_logits",
     "balanced_class_weights_from_labels",
     "balanced_class_weights_from_pockets",
+    "classification_metrics_from_logits",
     "evaluate_epoch_with_predictions",
     "evaluate_epoch",
     "predict_batch",

@@ -47,12 +47,14 @@ def build_load_report(
     structure_files: list[Path],
     skipped_structures: list[dict[str, str]],
     feature_fallbacks: list[dict[str, str]],
+    skipped_pockets: list[dict[str, str]],
 ) -> dict[str, Any]:
     return build_feature_load_report(
         pockets=pockets,
         total_structure_files=len(structure_files),
         skipped_structures=skipped_structures,
         feature_fallbacks=feature_fallbacks,
+        skipped_pockets=skipped_pockets,
     )
 
 
@@ -66,13 +68,15 @@ def load_structure_pockets(
     require_esm_embeddings: bool,
     feature_root_dir: Path,
     require_external_features: bool,
-) -> tuple[list[PocketRecord], list[dict[str, str]]]:
+    unsupported_metal_policy: str = "error",
+) -> tuple[list[PocketRecord], list[dict[str, str]], list[dict[str, str]]]:
     structure = parse_structure_file(str(structure_path), structure_id=structure_path.stem)
     extracted_pockets = extract_metal_pockets_from_structure(structure, structure_id=structure_path.stem)
     if not extracted_pockets:
-        return [], []
+        return [], [], []
 
     feature_fallbacks: list[dict[str, str]] = []
+    skipped_pockets: list[dict[str, str]] = []
     feature_sources = load_structure_feature_sources(
         structure=structure,
         structure_path=structure_path,
@@ -106,12 +110,43 @@ def load_structure_pockets(
             structure_path,
             allowed_site_keys,
         ):
+            skipped_pockets.append(
+                {
+                    "structure_id": pocket.structure_id,
+                    "pocket_id": pocket.pocket_id,
+                    "reason": "filtered_by_summary_sites",
+                }
+            )
             continue
 
-        assign_supervision_labels(pocket, ec_label)
+        try:
+            pocket.y_metal = infer_metal_target_class_from_pocket(
+                pocket,
+                unsupported_policy=unsupported_metal_policy,
+            )
+        except ValueError:
+            skipped_pockets.append(
+                {
+                    "structure_id": pocket.structure_id,
+                    "pocket_id": pocket.pocket_id,
+                    "reason": "unsupported_metal_label",
+                }
+            )
+            raise
+        if pocket.y_metal is None and unsupported_metal_policy == "skip":
+            skipped_pockets.append(
+                {
+                    "structure_id": pocket.structure_id,
+                    "pocket_id": pocket.pocket_id,
+                    "reason": "unsupported_metal_label",
+                }
+            )
+            continue
+        if ec_label is not None:
+            pocket.y_ec = ec_label
         kept_pockets.append(pocket)
 
-    return kept_pockets, feature_fallbacks
+    return kept_pockets, feature_fallbacks, skipped_pockets
 
 
 __all__ = [

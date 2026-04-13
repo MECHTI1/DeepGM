@@ -188,6 +188,10 @@ def pocket_record_from_metal_cluster(
         metadata={
             "metal_symbols_observed": cluster_symbols,
             "metal_site_ids": [record.site_id for record in metal_cluster],
+            "metal_site_coord_map": {
+                record.site_id: record.coord.float()
+                for record in metal_cluster
+            },
         },
     )
 

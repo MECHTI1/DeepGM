@@ -208,6 +208,7 @@ def build_feature_load_report(
     total_structure_files: int,
     skipped_structures: List[Dict[str, str]],
     feature_fallbacks: List[Dict[str, str]],
+    skipped_pockets: List[Dict[str, str]],
 ) -> Dict[str, object]:
     loaded_structures = {
         str(pocket.metadata.get("source_path", pocket.structure_id))
@@ -218,6 +219,7 @@ def build_feature_load_report(
         "loaded_structure_files": len(loaded_structures),
         "skipped_structures": skipped_structures,
         "feature_fallbacks": feature_fallbacks,
+        "skipped_pockets": skipped_pockets,
         **build_pocket_feature_coverage(pockets),
     }
 
