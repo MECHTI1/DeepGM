@@ -61,20 +61,29 @@ def probe_graph_construction(
     pockets: list[PocketRecord],
     config: TrainConfig,
     sample_size: int = 3,
+    precomputed_data: list[Any] | None = None,
 ) -> dict[str, Any]:
     sample: list[dict[str, Any]] = []
 
-    for pocket in pockets:
-        try:
-            data = pocket_to_pyg_data(
-                pocket,
-                esm_dim=config.esm_dim,
-                edge_radius=config.edge_radius,
-                require_ring_edges=config.require_ring_edges,
-            )
-        except Exception as exc:
-            raise ValueError(f"Graph preflight failed for pocket {pocket.pocket_id!r}: {exc}") from exc
+    if precomputed_data is not None:
+        if len(precomputed_data) != len(pockets):
+            raise ValueError("Graph preflight received mismatched precomputed data.")
+        iterator = zip(pockets, precomputed_data)
+    else:
+        iterator = []
+        for pocket in pockets:
+            try:
+                data = pocket_to_pyg_data(
+                    pocket,
+                    esm_dim=config.esm_dim,
+                    edge_radius=config.edge_radius,
+                    require_ring_edges=config.require_ring_edges,
+                )
+            except Exception as exc:
+                raise ValueError(f"Graph preflight failed for pocket {pocket.pocket_id!r}: {exc}") from exc
+            iterator.append((pocket, data))
 
+    for pocket, data in iterator:
         if len(sample) < sample_size:
             sample.append(
                 {
@@ -157,6 +166,8 @@ def run_preflight_checks(
     config: TrainConfig,
     *,
     feature_load_report: dict[str, Any] | None = None,
+    train_graphs: list[Any] | None = None,
+    val_graphs: list[Any] | None = None,
 ) -> dict[str, Any]:
     if not split.train_pockets:
         raise ValueError("Preflight failed: training split is empty.")
@@ -187,8 +198,8 @@ def run_preflight_checks(
             "Preflight failed: train/validation leakage detected for "
             f"--split-by {config.split_by!r}: {report['split_leakage_check']['overlap_examples']}"
         )
-    train_graph_probe = probe_graph_construction(split.train_pockets, config)
-    val_graph_probe = probe_graph_construction(split.val_pockets, config)
+    train_graph_probe = probe_graph_construction(split.train_pockets, config, precomputed_data=train_graphs)
+    val_graph_probe = probe_graph_construction(split.val_pockets, config, precomputed_data=val_graphs)
     report["graph_probe"] = train_graph_probe
     report["train_graph_probe"] = train_graph_probe
     report["val_graph_probe"] = val_graph_probe

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+MEDIA_DATA_ROOT_ENV = "DEEPGM_MEDIA_DATA_ROOT"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / ".data"
 EMBEDDINGS_DIR = DATA_DIR / "embeddings"
 RUNS_DIR = DATA_DIR / "training_runs"
-MEDIA_DATA_ROOT = Path("/media/Data")
+MEDIA_DATA_ROOT = Path(os.getenv(MEDIA_DATA_ROOT_ENV, "/media/Data")).expanduser()
 PINMYMETAL_SETS_DIR = MEDIA_DATA_ROOT / "pinmymetal_sets"
 MAHOMES_DIR = PINMYMETAL_SETS_DIR / "mahomes"
 MAHOMES_TRAIN_SET_DIR = MAHOMES_DIR / "train_set"

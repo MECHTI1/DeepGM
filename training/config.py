@@ -10,6 +10,7 @@ from training.data import DEFAULT_STRUCTURE_DIR, DEFAULT_TRAIN_SUMMARY_CSV
 SPLIT_BY_CHOICES = ("pdbid", "structure_id", "pocket_id")
 UNSUPPORTED_METAL_POLICY_CHOICES = ("error", "skip")
 SELECTION_METRIC_CHOICES = (
+    "train_loss",
     "val_loss",
     "val_joint_balanced_acc",
     "val_joint_macro_f1",
@@ -42,7 +43,7 @@ class TrainConfig:
     require_esm_embeddings: bool = True
     require_external_features: bool = True
     unsupported_metal_policy: str = "error"
-    selection_metric: str = "val_joint_balanced_acc"
+    selection_metric: str = "train_loss"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -76,7 +77,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--selection-metric",
         type=str,
-        default="val_joint_balanced_acc",
+        default=None,
         choices=SELECTION_METRIC_CHOICES,
     )
     parser.add_argument(
@@ -91,6 +92,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def parse_args(argv: Sequence[str] | None = None) -> TrainConfig:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    selection_metric = args.selection_metric
+    if selection_metric is None:
+        selection_metric = "val_joint_balanced_acc" if args.val_fraction > 0.0 else "train_loss"
     return TrainConfig(
         structure_dir=args.structure_dir,
         summary_csv=args.summary_csv,
@@ -112,7 +116,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TrainConfig:
         require_esm_embeddings=not args.allow_missing_esm_embeddings,
         require_external_features=not args.allow_missing_external_features,
         unsupported_metal_policy=args.unsupported_metal_policy,
-        selection_metric=args.selection_metric,
+        selection_metric=selection_metric,
     )
 
 

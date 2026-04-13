@@ -15,6 +15,7 @@ from training.run import (
     build_dataset_summary,
     split_pockets,
     train_and_select_checkpoint,
+    validate_training_configuration,
 )
 
 
@@ -57,6 +58,12 @@ def make_pocket(
 
 
 class TrainConfigParsingTests(unittest.TestCase):
+    def test_parse_args_defaults_to_train_loss_without_validation(self) -> None:
+        config = parse_args([])
+
+        self.assertEqual(config.val_fraction, 0.0)
+        self.assertEqual(config.selection_metric, "train_loss")
+
     def test_parse_args_builds_expected_config(self) -> None:
         config = parse_args(
             [
@@ -165,6 +172,45 @@ class DatasetSummaryTests(unittest.TestCase):
 class TrainingLoopHistoryTests(unittest.TestCase):
     @patch("training.run.train_epoch", return_value=0.75)
     @patch("training.run.evaluate_split_metrics")
+    def test_train_and_select_checkpoint_uses_train_loss_without_validation(
+        self,
+        mock_evaluate_split_metrics,
+        _mock_train_epoch,
+    ) -> None:
+        mock_evaluate_split_metrics.side_effect = [
+            {
+                "train_loss": 0.11,
+                "train_metal_acc": 0.8,
+                "train_ec_acc": 0.6,
+            },
+            {},
+        ]
+
+        model = torch.nn.Linear(1, 1)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        prepared = PreparedRun(
+            config_payload={},
+            run_dir=Path("/tmp"),
+            split=PocketSplit(train_pockets=[], val_pockets=[]),
+            dataset_summary={},
+            normalization_stats=FeatureNormalizationStats(means={}, stds={}),
+            train_loader=None,
+            val_loader=None,
+            model=model,
+            optimizer=optimizer,
+        )
+        config = parse_args(["--epochs", "1"])
+
+        history, best_checkpoint = train_and_select_checkpoint(prepared, config)
+
+        self.assertEqual(history[0]["train_loss"], 0.75)
+        self.assertIsNotNone(best_checkpoint)
+        self.assertEqual(best_checkpoint["epoch"], 1)
+        self.assertEqual(best_checkpoint["selection_metric"], "train_loss")
+        self.assertEqual(best_checkpoint["selection_metric_value"], 0.75)
+
+    @patch("training.run.train_epoch", return_value=0.75)
+    @patch("training.run.evaluate_split_metrics")
     def test_train_and_select_checkpoint_keeps_optimizer_train_loss(
         self,
         mock_evaluate_split_metrics,
@@ -211,6 +257,14 @@ class TrainingLoopHistoryTests(unittest.TestCase):
         self.assertEqual(best_checkpoint["epoch"], 1)
         self.assertEqual(best_checkpoint["selection_metric"], "val_joint_balanced_acc")
         self.assertEqual(best_checkpoint["selection_metric_value"], 0.65)
+
+
+class TrainingConfigurationValidationTests(unittest.TestCase):
+    def test_validation_metric_requires_validation_split(self) -> None:
+        config = parse_args(["--selection-metric", "val_joint_balanced_acc"])
+
+        with self.assertRaisesRegex(ValueError, "requires validation"):
+            validate_training_configuration(config)
 
 
 if __name__ == "__main__":

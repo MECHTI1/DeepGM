@@ -11,7 +11,13 @@ from training.data import (
     DEFAULT_STRUCTURE_DIR,
     load_smoke_test_pockets_from_dir,
 )
-from training.graph_dataset import FeatureNormalizationStats, PocketGraphDataset, summarize_graph_dataset
+from training.graph_dataset import (
+    FeatureNormalizationStats,
+    PocketGraphDataset,
+    build_graph_data_list,
+    compute_feature_normalization_stats,
+    summarize_graph_dataset,
+)
 from training.loop import (
     accuracy_from_logits,
     balanced_class_weights_from_pockets,
@@ -38,18 +44,19 @@ def run_smoke_test(
     )
 
     graph_summary = summarize_graph_dataset(pockets, esm_dim=esm_dim, edge_radius=edge_radius)
-    normalization_stats = PocketGraphDataset.fit_normalization_stats(
+    graph_data_list = build_graph_data_list(
         pockets,
         esm_dim=esm_dim,
         edge_radius=edge_radius,
-        clamp_value=5.0,
     )
+    normalization_stats = compute_feature_normalization_stats(graph_data_list, clamp_value=5.0)
 
     dataset = PocketGraphDataset(
         pockets,
         esm_dim=esm_dim,
         edge_radius=edge_radius,
         normalization_stats=normalization_stats,
+        precomputed_data=graph_data_list,
     )
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 

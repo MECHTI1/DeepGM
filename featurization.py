@@ -253,9 +253,13 @@ def residue_to_stage1_node_features(
     pocket: PocketRecord,
     esm_dim: int,
     v_net: Tensor,
+    *,
+    is_first_shell: bool | None = None,
+    is_second_shell: bool | None = None,
 ) -> Dict[str, Tensor]:
-    if rr.esm_embedding is None:
-        rr.esm_embedding = torch.zeros(esm_dim, dtype=torch.float32)
+    esm_embedding = rr.esm_embedding
+    if esm_embedding is None:
+        esm_embedding = torch.zeros(esm_dim, dtype=torch.float32)
 
     metal_coords = MultinuclearSiteHandler.metal_coords_for_pocket(pocket)
     ca = rr.ca()
@@ -267,7 +271,10 @@ def residue_to_stage1_node_features(
     min_donor_to_metal = MultinuclearSiteHandler.min_distance_to_metals(donor_coords, metal_coords, donor_mask)
 
     x_role = torch.tensor(
-        [float(rr.is_first_shell), float(rr.is_second_shell)],
+        [
+            float(rr.is_first_shell if is_first_shell is None else is_first_shell),
+            float(rr.is_second_shell if is_second_shell is None else is_second_shell),
+        ],
         dtype=torch.float32,
     )
     x_dist_raw = torch.tensor(
@@ -289,7 +296,7 @@ def residue_to_stage1_node_features(
     x_vec = torch.stack([(fg - ca).float(), v_res], dim=0)
 
     return {
-        "x_esm": rr.esm_embedding.float(),
+        "x_esm": esm_embedding.float(),
         "x_reschem": build_x_reschem(rr).float(),
         "x_role": x_role,
         "x_dist_raw": x_dist_raw,

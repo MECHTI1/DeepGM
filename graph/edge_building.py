@@ -34,13 +34,14 @@ RING_EDGE_SYMMETRY_POLICY = "bidirectional"
 RING_METAL_CONTACT_POLICY = "self_loop"
 
 
-def annotate_shell_roles(
+def compute_shell_roles(
     pocket: PocketRecord,
     first_shell_cutoff: float = DEFAULT_FIRST_SHELL_CUTOFF,
     second_shell_cutoff: float = 4.5,
-) -> None:
+) -> list[tuple[bool, bool]]:
     metal_coords = MultinuclearSiteHandler.metal_coords_for_pocket(pocket)
     fg_centroids: list[Tensor] = []
+    first_shell_flags: list[bool] = []
 
     for residue in pocket.residues:
         donor_coords, donor_mask = donor_coords_and_mask(residue, max_donors=2)
@@ -49,23 +50,86 @@ def annotate_shell_roles(
             metal_coords,
             donor_mask,
         )
-        residue.is_first_shell = min_donor_distance <= first_shell_cutoff
-        residue.is_second_shell = False
+        first_shell_flags.append(min_donor_distance <= first_shell_cutoff)
         fg_centroids.append(functional_group_centroid(residue))
 
     first_shell_centroids = [
-        fg for residue, fg in zip(pocket.residues, fg_centroids) if residue.is_first_shell
+        fg for is_first_shell, fg in zip(first_shell_flags, fg_centroids) if is_first_shell
     ]
-    for residue, fg in zip(pocket.residues, fg_centroids):
-        if residue.is_first_shell or not first_shell_centroids:
+    second_shell_flags: list[bool] = []
+    for is_first_shell, fg in zip(first_shell_flags, fg_centroids):
+        if is_first_shell or not first_shell_centroids:
+            second_shell_flags.append(False)
             continue
-        residue.is_second_shell = min(
-            safe_norm(fg - first_shell_fg, dim=-1).item() for first_shell_fg in first_shell_centroids
-        ) <= second_shell_cutoff
+        second_shell_flags.append(
+            min(safe_norm(fg - first_shell_fg, dim=-1).item() for first_shell_fg in first_shell_centroids)
+            <= second_shell_cutoff
+        )
+
+    return list(zip(first_shell_flags, second_shell_flags))
+
+
+def annotate_shell_roles(
+    pocket: PocketRecord,
+    first_shell_cutoff: float = DEFAULT_FIRST_SHELL_CUTOFF,
+    second_shell_cutoff: float = 4.5,
+) -> None:
+    shell_roles = compute_shell_roles(
+        pocket,
+        first_shell_cutoff=first_shell_cutoff,
+        second_shell_cutoff=second_shell_cutoff,
+    )
+    for residue, (is_first_shell, is_second_shell) in zip(pocket.residues, shell_roles):
+        residue.is_first_shell = is_first_shell
+        residue.is_second_shell = is_second_shell
 
 
 def residue_atom_coords(residue: ResidueRecord) -> Tensor:
     return torch.stack([coord.float() for coord in residue.atoms.values()], dim=0)
+
+
+def residue_spatial_envelope(residue: ResidueRecord) -> tuple[Tensor, float]:
+    coords = residue_atom_coords(residue)
+    center = coords.mean(dim=0)
+    radius = float(safe_norm(coords - center.unsqueeze(0), dim=-1).max().item())
+    return center, radius
+
+
+def candidate_residue_pairs_within_radius(
+    residues: list[ResidueRecord],
+    radius: float,
+) -> list[tuple[int, int]]:
+    if len(residues) < 2:
+        return []
+
+    envelopes = [residue_spatial_envelope(residue) for residue in residues]
+    centers = [center for center, _radius in envelopes]
+    envelope_radii = [envelope_radius for _center, envelope_radius in envelopes]
+    max_envelope_radius = max(envelope_radii, default=0.0)
+    cell_size = max(radius + 2.0 * max_envelope_radius, 1e-6)
+
+    buckets: dict[tuple[int, int, int], list[int]] = {}
+    for idx, center in enumerate(centers):
+        cell = tuple(torch.floor(center / cell_size).to(torch.long).tolist())
+        buckets.setdefault(cell, []).append(idx)
+
+    offsets = (-1, 0, 1)
+    candidate_pairs: set[tuple[int, int]] = set()
+    for src_idx, src_center in enumerate(centers):
+        src_cell = tuple(torch.floor(src_center / cell_size).to(torch.long).tolist())
+        for dx in offsets:
+            for dy in offsets:
+                for dz in offsets:
+                    neighbor_cell = (src_cell[0] + dx, src_cell[1] + dy, src_cell[2] + dz)
+                    for dst_idx in buckets.get(neighbor_cell, []):
+                        if dst_idx <= src_idx:
+                            continue
+                        coarse_cutoff = radius + envelope_radii[src_idx] + envelope_radii[dst_idx]
+                        center_distance = float(safe_norm(centers[dst_idx] - src_center, dim=-1).item())
+                        if center_distance <= coarse_cutoff:
+                            candidate_pairs.add((src_idx, dst_idx))
+
+    return sorted(candidate_pairs)
 
 
 def closest_points_between_residues(
@@ -111,18 +175,75 @@ def build_pair_edge_geometry(
 
 
 def build_radius_graph_from_residues(residues: list[ResidueRecord], radius: float) -> Tensor:
-    edges: list[tuple[int, int]] = []
-    for src_idx, src_residue in enumerate(residues):
-        for dst_idx, dst_residue in enumerate(residues):
-            if src_idx == dst_idx:
-                continue
-            _src_coord, _dst_coord, contact_distance = closest_points_between_residues(src_residue, dst_residue)
-            if contact_distance <= radius:
-                edges.append((src_idx, dst_idx))
+    adjacency: dict[int, list[int]] = {idx: [] for idx in range(len(residues))}
+    for src_idx, dst_idx in candidate_residue_pairs_within_radius(residues, radius):
+        _src_coord, _dst_coord, contact_distance = closest_points_between_residues(
+            residues[src_idx],
+            residues[dst_idx],
+        )
+        if contact_distance <= radius:
+            adjacency[src_idx].append(dst_idx)
+            adjacency[dst_idx].append(src_idx)
+
+    edges = [
+        (src_idx, dst_idx)
+        for src_idx in range(len(residues))
+        for dst_idx in sorted(adjacency[src_idx])
+    ]
 
     if not edges:
         return torch.zeros(2, 0, dtype=torch.long)
     return torch.tensor(edges, dtype=torch.long).t().contiguous()
+
+
+def build_radius_edge_records_from_residues(
+    pocket: PocketRecord,
+    radius: float,
+) -> list[dict[str, Any]]:
+    edge_records: list[dict[str, Any]] = []
+    adjacency: dict[int, list[int]] = {idx: [] for idx in range(len(pocket.residues))}
+    directed_contacts: dict[tuple[int, int], tuple[Tensor, Tensor]] = {}
+    for src_idx, dst_idx in candidate_residue_pairs_within_radius(pocket.residues, radius):
+        src_residue = pocket.residues[src_idx]
+        dst_residue = pocket.residues[dst_idx]
+        src_coord, dst_coord, contact_distance = closest_points_between_residues(src_residue, dst_residue)
+        if contact_distance > radius:
+            continue
+        directed_contacts[(src_idx, dst_idx)] = (src_coord, dst_coord)
+        directed_contacts[(dst_idx, src_idx)] = (dst_coord, src_coord)
+        adjacency[src_idx].append(dst_idx)
+        adjacency[dst_idx].append(src_idx)
+
+    for src_idx in range(len(pocket.residues)):
+        for dst_idx in sorted(adjacency[src_idx]):
+            src_residue = pocket.residues[src_idx]
+            dst_residue = pocket.residues[dst_idx]
+            src_coord, dst_coord = directed_contacts[(src_idx, dst_idx)]
+            edge_dist_raw, edge_seqsep, edge_same_chain, vector_raw = build_pair_edge_geometry(
+                src_residue,
+                dst_residue,
+                src_coord=src_coord,
+                dst_coord=dst_coord,
+            )
+            edge_records.append(
+                {
+                    "src": src_idx,
+                    "dst": dst_idx,
+                    "dist_raw": edge_dist_raw,
+                    "seqsep": edge_seqsep,
+                    "same_chain": edge_same_chain,
+                    "vector_raw": vector_raw,
+                    "interaction_type": torch.zeros(
+                        len(INTERACTION_SUMMARIES_OPTIONAL_WITH_RING),
+                        dtype=torch.float32,
+                    ),
+                    "source_type": one_hot_index(
+                        EDGE_SOURCE_TO_INDEX["radius"],
+                        len(EDGE_SOURCE_TYPES),
+                    ),
+                }
+            )
+    return edge_records
 
 
 def build_ring_interaction_edge_records(
@@ -329,9 +450,12 @@ def stack_edge_features(edge_records: list[dict[str, Any]]) -> dict[str, Tensor]
 __all__ = [
     "annotate_shell_roles",
     "build_pair_edge_geometry",
+    "build_radius_edge_records_from_residues",
     "build_radius_graph_from_residues",
     "build_ring_interaction_edge_records",
+    "candidate_residue_pairs_within_radius",
     "closest_points_between_residues",
+    "compute_shell_roles",
     "radius_edge_records_from_index",
     "residue_atom_coords",
     "RING_EDGE_SYMMETRY_POLICY",

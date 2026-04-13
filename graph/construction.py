@@ -17,10 +17,11 @@ from featurization import (
     residue_to_stage1_node_features,
 )
 from graph.edge_building import (
-    annotate_shell_roles,
     build_pair_edge_geometry,
+    build_radius_edge_records_from_residues,
     build_radius_graph_from_residues,
     build_ring_interaction_edge_records,
+    compute_shell_roles,
     radius_edge_records_from_index,
     stack_edge_features,
 )
@@ -39,11 +40,12 @@ from graph.structure_parsing import (
 __all__ = [
     "attach_esm_embeddings",
     "attach_external_residue_features",
-    "annotate_shell_roles",
     "build_pair_edge_geometry",
+    "build_radius_edge_records_from_residues",
     "build_radius_graph_from_residues",
     "build_ring_interaction_edge_records",
     "canonical_ring_edges_output_path",
+    "compute_shell_roles",
     "extract_metal_pockets_from_structure",
     "parse_structure_file",
     "pocket_to_pyg_data",
@@ -76,14 +78,23 @@ def pocket_to_pyg_data(
     edge_radius: float = DEFAULT_EDGE_RADIUS,
     require_ring_edges: bool = False,
 ) -> Data:
-    annotate_shell_roles(pocket)
+    shell_roles = compute_shell_roles(pocket)
     v_net = compute_net_ligand_vector(pocket)
     node_features = stack_node_features(
-        [residue_to_stage1_node_features(residue, pocket, esm_dim, v_net) for residue in pocket.residues]
+        [
+            residue_to_stage1_node_features(
+                residue,
+                pocket,
+                esm_dim,
+                v_net,
+                is_first_shell=is_first_shell,
+                is_second_shell=is_second_shell,
+            )
+            for residue, (is_first_shell, is_second_shell) in zip(pocket.residues, shell_roles)
+        ]
     )
 
-    base_edge_index = build_radius_graph_from_residues(pocket.residues, edge_radius)
-    edge_records = radius_edge_records_from_index(pocket, base_edge_index)
+    edge_records = build_radius_edge_records_from_residues(pocket, edge_radius)
     edge_records.extend(build_ring_interaction_edge_records(pocket, require_ring_edges=require_ring_edges))
     if not edge_records:
         raise ValueError(
@@ -109,6 +120,7 @@ def pocket_to_pyg_data(
 
 
 def save_pocket_metadata_json(pocket: PocketRecord, outpath: str) -> None:
+    shell_roles = compute_shell_roles(pocket)
     payload = {
         "structure_id": pocket.structure_id,
         "pocket_id": pocket.pocket_id,
@@ -125,14 +137,14 @@ def save_pocket_metadata_json(pocket: PocketRecord, outpath: str) -> None:
                 "resseq": residue.resseq,
                 "icode": residue.icode,
                 "resname": residue.resname,
-                "is_first_shell": residue.is_first_shell,
-                "is_second_shell": residue.is_second_shell,
+                "is_first_shell": is_first_shell,
+                "is_second_shell": is_second_shell,
                 "has_esm_embedding": residue.has_esm_embedding,
                 "has_external_features": residue.has_external_features,
                 "external_features": residue.external_features,
                 "atom_names": sorted(list(residue.atoms.keys())),
             }
-            for residue in pocket.residues
+            for residue, (is_first_shell, is_second_shell) in zip(pocket.residues, shell_roles)
         ],
     }
     with open(outpath, "w") as handle:

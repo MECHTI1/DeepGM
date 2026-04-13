@@ -19,6 +19,23 @@ class FeatureNormalizationStats:
     clamp_value: float = 5.0
 
 
+def build_graph_data_list(
+    pockets: list[PocketRecord],
+    esm_dim: int,
+    edge_radius: float = DEFAULT_EDGE_RADIUS,
+    require_ring_edges: bool = False,
+) -> list[Data]:
+    return [
+        pocket_to_pyg_data(
+            pocket,
+            esm_dim=esm_dim,
+            edge_radius=edge_radius,
+            require_ring_edges=require_ring_edges,
+        )
+        for pocket in pockets
+    ]
+
+
 def compute_feature_normalization_stats(
     data_list: list[Data],
     clamp_value: float = 5.0,
@@ -95,12 +112,16 @@ class PocketGraphDataset(Dataset):
         edge_radius: float = DEFAULT_EDGE_RADIUS,
         normalization_stats: FeatureNormalizationStats | None = None,
         require_ring_edges: bool = False,
+        precomputed_data: list[Data] | None = None,
     ):
         self.pockets = pockets
         self.esm_dim = esm_dim
         self.edge_radius = edge_radius
         self.normalization_stats = normalization_stats
         self.require_ring_edges = require_ring_edges
+        if precomputed_data is not None and len(precomputed_data) != len(pockets):
+            raise ValueError("precomputed_data length must match pockets length.")
+        self.precomputed_data = precomputed_data
 
     @classmethod
     def fit_normalization_stats(
@@ -110,32 +131,36 @@ class PocketGraphDataset(Dataset):
         edge_radius: float = DEFAULT_EDGE_RADIUS,
         clamp_value: float = 5.0,
         require_ring_edges: bool = False,
+        precomputed_data: list[Data] | None = None,
     ) -> FeatureNormalizationStats:
-        data_list = [
-            pocket_to_pyg_data(
-                pocket,
+        data_list = precomputed_data
+        if data_list is None:
+            data_list = build_graph_data_list(
+                pockets,
                 esm_dim=esm_dim,
                 edge_radius=edge_radius,
                 require_ring_edges=require_ring_edges,
             )
-            for pocket in pockets
-        ]
         return compute_feature_normalization_stats(data_list, clamp_value=clamp_value)
 
     def __len__(self) -> int:
         return len(self.pockets)
 
     def __getitem__(self, idx: int) -> Data:
-        data = pocket_to_pyg_data(
-            self.pockets[idx],
-            esm_dim=self.esm_dim,
-            edge_radius=self.edge_radius,
-            require_ring_edges=self.require_ring_edges,
-        )
+        if self.precomputed_data is not None:
+            data = self.precomputed_data[idx].clone()
+        else:
+            data = pocket_to_pyg_data(
+                self.pockets[idx],
+                esm_dim=self.esm_dim,
+                edge_radius=self.edge_radius,
+                require_ring_edges=self.require_ring_edges,
+            )
         return apply_feature_normalization(data, self.normalization_stats)
 
 
 __all__ = [
+    "build_graph_data_list",
     "FeatureNormalizationStats",
     "PocketGraphDataset",
     "apply_feature_normalization",

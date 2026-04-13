@@ -16,7 +16,12 @@ from model import GVPPocketClassifier
 from project_paths import resolve_runs_dir
 from training.config import TrainConfig, config_to_payload
 from training.data import load_training_pockets_with_report_from_dir
-from training.graph_dataset import FeatureNormalizationStats, PocketGraphDataset
+from training.graph_dataset import (
+    FeatureNormalizationStats,
+    PocketGraphDataset,
+    build_graph_data_list,
+    compute_feature_normalization_stats,
+)
 from training.loop import (
     accuracy_from_logits,
     balanced_class_weights_from_pockets,
@@ -70,6 +75,7 @@ def build_dataloader(
     config: TrainConfig,
     normalization_stats: FeatureNormalizationStats,
     shuffle: bool,
+    precomputed_data=None,
 ) -> DataLoader:
     dataset = PocketGraphDataset(
         pockets,
@@ -77,8 +83,18 @@ def build_dataloader(
         edge_radius=config.edge_radius,
         normalization_stats=normalization_stats,
         require_ring_edges=config.require_ring_edges,
+        precomputed_data=precomputed_data,
     )
     return DataLoader(dataset, batch_size=config.batch_size, shuffle=shuffle)
+
+
+def validate_training_configuration(config: TrainConfig) -> None:
+    if config.val_fraction == 0.0 and config.selection_metric.startswith("val_"):
+        raise ValueError(
+            "Selection metric "
+            f"{config.selection_metric!r} requires validation, but --val-fraction is 0. "
+            "Either enable validation or choose a train-based metric such as 'train_loss'."
+        )
 
 
 def evaluate_split_metrics(model, loader: DataLoader | None, device: str, prefix: str) -> dict[str, Any]:
@@ -196,16 +212,15 @@ def format_epoch_log(record: dict[str, Any]) -> str:
 
 def metric_sort_value(record: dict[str, Any], selection_metric: str) -> tuple[float, bool]:
     if selection_metric not in record or record[selection_metric] is None:
-        if "val_loss" in record and record["val_loss"] is not None:
-            return float(record["val_loss"]), False
         raise ValueError(f"Selection metric {selection_metric!r} is missing from the epoch record.")
     metric_value = float(record[selection_metric])
-    if selection_metric == "val_loss":
+    if selection_metric.endswith("_loss"):
         return metric_value, False
     return metric_value, True
 
 
 def prepare_run(config: TrainConfig) -> PreparedRun:
+    validate_training_configuration(config)
     config_payload = config_to_payload(config)
     load_result = load_training_pockets_with_report_from_dir(
         structure_dir=config.structure_dir,
@@ -233,22 +248,46 @@ def prepare_run(config: TrainConfig) -> PreparedRun:
         config,
         feature_load_report=load_result.feature_report,
     )
+    train_graphs = build_graph_data_list(
+        split.train_pockets,
+        esm_dim=config.esm_dim,
+        edge_radius=config.edge_radius,
+        require_ring_edges=config.require_ring_edges,
+    )
+    val_graphs = (
+        build_graph_data_list(
+            split.val_pockets,
+            esm_dim=config.esm_dim,
+            edge_radius=config.edge_radius,
+            require_ring_edges=config.require_ring_edges,
+        )
+        if split.val_pockets
+        else None
+    )
     dataset_summary["preflight"] = run_preflight_checks(
         split,
         config,
         feature_load_report=load_result.feature_report,
+        train_graphs=train_graphs,
+        val_graphs=val_graphs,
     )
     run_dir = build_run_dir(config)
-    normalization_stats = PocketGraphDataset.fit_normalization_stats(
+    normalization_stats = compute_feature_normalization_stats(train_graphs, clamp_value=5.0)
+    train_loader = build_dataloader(
         split.train_pockets,
-        esm_dim=config.esm_dim,
-        edge_radius=config.edge_radius,
-        clamp_value=5.0,
-        require_ring_edges=config.require_ring_edges,
+        config,
+        normalization_stats,
+        shuffle=True,
+        precomputed_data=train_graphs,
     )
-    train_loader = build_dataloader(split.train_pockets, config, normalization_stats, shuffle=True)
     val_loader = (
-        build_dataloader(split.val_pockets, config, normalization_stats, shuffle=False)
+        build_dataloader(
+            split.val_pockets,
+            config,
+            normalization_stats,
+            shuffle=False,
+            precomputed_data=val_graphs,
+        )
         if split.val_pockets
         else None
     )
@@ -301,26 +340,25 @@ def train_and_select_checkpoint(
 
         val_metrics = evaluate_split_metrics(prepared.model, prepared.val_loader, config.device, prefix="val")
         record.update(val_metrics)
-        if val_metrics:
-            current_metric, maximize = metric_sort_value(record, config.selection_metric)
-            is_better = (
-                best_metric is None
-                or (maximize and current_metric > best_metric)
-                or (not maximize and current_metric < best_metric)
+        current_metric, maximize = metric_sort_value(record, config.selection_metric)
+        is_better = (
+            best_metric is None
+            or (maximize and current_metric > best_metric)
+            or (not maximize and current_metric < best_metric)
+        )
+        if is_better:
+            best_metric = current_metric
+            best_checkpoint = checkpoint_payload(
+                model_state_dict=copy.deepcopy(prepared.model.state_dict()),
+                optimizer_state_dict=copy.deepcopy(prepared.optimizer.state_dict()),
+                history=copy.deepcopy(history + [record]),
+                config_payload=prepared.config_payload,
+                normalization_stats=prepared.normalization_stats,
+                dataset_summary=prepared.dataset_summary,
             )
-            if is_better:
-                best_metric = current_metric
-                best_checkpoint = checkpoint_payload(
-                    model_state_dict=copy.deepcopy(prepared.model.state_dict()),
-                    optimizer_state_dict=copy.deepcopy(prepared.optimizer.state_dict()),
-                    history=copy.deepcopy(history + [record]),
-                    config_payload=prepared.config_payload,
-                    normalization_stats=prepared.normalization_stats,
-                    dataset_summary=prepared.dataset_summary,
-                )
-                best_checkpoint["epoch"] = epoch
-                best_checkpoint["selection_metric"] = config.selection_metric
-                best_checkpoint["selection_metric_value"] = current_metric
+            best_checkpoint["epoch"] = epoch
+            best_checkpoint["selection_metric"] = config.selection_metric
+            best_checkpoint["selection_metric_value"] = current_metric
 
         history.append(record)
         print(format_epoch_log(record))
@@ -395,4 +433,5 @@ __all__ = [
     "set_seed",
     "split_pockets",
     "train_and_select_checkpoint",
+    "validate_training_configuration",
 ]

@@ -8,7 +8,11 @@ from torch_geometric.loader import DataLoader
 from data_structures import PocketRecord, ResidueRecord
 from label_schemes import N_EC_CLASSES, N_METAL_CLASSES
 from model import GVPPocketClassifier
-from training.graph_dataset import PocketGraphDataset
+from training.graph_dataset import (
+    PocketGraphDataset,
+    build_graph_data_list,
+    compute_feature_normalization_stats,
+)
 
 
 def make_residue(
@@ -84,6 +88,29 @@ def make_pocket(*, pocket_id: str, esm_dim: int, metal_shift: float, y_metal: in
 
 
 class ModelSmokeTests(unittest.TestCase):
+    def test_precomputed_graphs_are_cloned_before_normalization(self) -> None:
+        esm_dim = 8
+        pockets = [
+            make_pocket(pocket_id="pocket-a", esm_dim=esm_dim, metal_shift=0.0, y_metal=0, y_ec=1),
+        ]
+        precomputed = build_graph_data_list(pockets, esm_dim=esm_dim, edge_radius=3.0)
+        original_x_misc = precomputed[0].x_misc.clone()
+        normalization_stats = compute_feature_normalization_stats(precomputed)
+
+        dataset = PocketGraphDataset(
+            pockets,
+            esm_dim=esm_dim,
+            edge_radius=3.0,
+            normalization_stats=normalization_stats,
+            precomputed_data=precomputed,
+        )
+        first = dataset[0]
+        second = dataset[0]
+
+        self.assertFalse(torch.equal(first.x_misc, original_x_misc))
+        self.assertTrue(torch.equal(precomputed[0].x_misc, original_x_misc))
+        self.assertTrue(torch.equal(first.x_misc, second.x_misc))
+
     def test_graph_dataset_item_batches_into_model_forward(self) -> None:
         torch.manual_seed(0)
         esm_dim = 8

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,11 +8,15 @@ from pathlib import Path
 import torch
 
 from data_structures import EDGE_SOURCE_TO_INDEX, PocketRecord, RING_INTERACTION_TO_INDEX, ResidueRecord
-from graph.construction import pocket_to_pyg_data
+from graph.construction import pocket_to_pyg_data, save_pocket_metadata_json
 from graph.edge_building import (
+    compute_shell_roles,
     build_pair_edge_geometry,
+    build_radius_edge_records_from_residues,
     build_radius_graph_from_residues,
     build_ring_interaction_edge_records,
+    candidate_residue_pairs_within_radius,
+    radius_edge_records_from_index,
     stack_edge_features,
 )
 from graph.feature_utils import attach_esm_embeddings, attach_external_residue_features
@@ -101,6 +106,50 @@ class GraphEdgeBuildingTests(unittest.TestCase):
         edge_index = build_radius_graph_from_residues(residues, radius=2.5)
 
         self.assertEqual(edge_index.tolist(), [[0, 1], [1, 0]])
+
+    def test_candidate_pairs_keep_sidechain_contacts_with_distant_ca_atoms(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=1,
+                ca=(0.0, 0.0, 0.0),
+                extra_atoms={"CB": (9.8, 0.0, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=2,
+                ca=(20.0, 0.0, 0.0),
+                extra_atoms={"CB": (10.2, 0.0, 0.0)},
+            ),
+        ]
+
+        candidate_pairs = candidate_residue_pairs_within_radius(residues, radius=1.0)
+        edge_index = build_radius_graph_from_residues(residues, radius=1.0)
+
+        self.assertEqual(candidate_pairs, [(0, 1)])
+        self.assertEqual(edge_index.tolist(), [[0, 1], [1, 0]])
+
+    def test_build_radius_edge_records_matches_index_based_path(self) -> None:
+        residues = [
+            make_residue(chain_id="A", resseq=1, ca=(0.0, 0.0, 0.0), cb=(1.0, 0.0, 0.0)),
+            make_residue(chain_id="A", resseq=2, ca=(0.0, 0.0, 2.0), cb=(1.0, 0.0, 2.0)),
+        ]
+        pocket = make_pocket(residues)
+
+        edge_index = build_radius_graph_from_residues(residues, radius=2.5)
+        expected = radius_edge_records_from_index(pocket, edge_index)
+        actual = build_radius_edge_records_from_residues(pocket, radius=2.5)
+
+        self.assertEqual(
+            [(record["src"], record["dst"]) for record in actual],
+            [(record["src"], record["dst"]) for record in expected],
+        )
+        self.assertTrue(
+            all(torch.allclose(left["dist_raw"], right["dist_raw"]) for left, right in zip(actual, expected))
+        )
+        self.assertTrue(
+            all(torch.allclose(left["vector_raw"], right["vector_raw"]) for left, right in zip(actual, expected))
+        )
 
     def test_stack_edge_features_builds_tensor_batch(self) -> None:
         edge_features = stack_edge_features(
@@ -200,6 +249,58 @@ class GraphEdgeBuildingTests(unittest.TestCase):
         ring_mask = data.edge_source_type[:, EDGE_SOURCE_TO_INDEX["ring"]] > 0.5
         self.assertGreater(int(ring_mask.sum().item()), 0)
         self.assertIn([0, 0], data.edge_index.t().tolist())
+
+    def test_pocket_to_pyg_data_does_not_mutate_residue_shell_flags(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=1,
+                ca=(0.0, 0.0, 0.0),
+                cb=(0.8, 0.5, 0.0),
+                extra_atoms={"ND1": (0.4, 0.2, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=2,
+                ca=(0.0, 0.0, 2.0),
+                cb=(0.7, 0.4, 2.1),
+                extra_atoms={"ND1": (0.2, 0.1, 1.5)},
+            ),
+        ]
+        for residue in residues:
+            residue.esm_embedding = torch.ones(4, dtype=torch.float32)
+            residue.has_esm_embedding = True
+            residue.external_features = {"SASA": 1.0}
+            residue.has_external_features = True
+        pocket = make_pocket(residues)
+
+        expected_shell_roles = compute_shell_roles(pocket)
+        self.assertEqual([(r.is_first_shell, r.is_second_shell) for r in pocket.residues], [(False, False), (False, False)])
+
+        data = pocket_to_pyg_data(pocket, esm_dim=4, edge_radius=3.0)
+
+        self.assertEqual([(r.is_first_shell, r.is_second_shell) for r in pocket.residues], [(False, False), (False, False)])
+        self.assertEqual(data.x_role.tolist(), [[float(a), float(b)] for a, b in expected_shell_roles])
+
+    def test_save_pocket_metadata_json_uses_computed_shell_roles(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=1,
+                ca=(0.0, 0.0, 0.0),
+                cb=(0.8, 0.5, 0.0),
+                extra_atoms={"ND1": (0.4, 0.2, 0.0)},
+            )
+        ]
+        pocket = make_pocket(residues)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outpath = Path(tmpdir) / "metadata.json"
+            save_pocket_metadata_json(pocket, str(outpath))
+            payload = json.loads(outpath.read_text(encoding="utf-8"))
+
+        self.assertIn("is_first_shell", payload["residues"][0])
+        self.assertIn("is_second_shell", payload["residues"][0])
 
 
 class GraphDatasetRuntimeTests(unittest.TestCase):
