@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+from data_structures import DEFAULT_EDGE_RADIUS
 from training.data import DEFAULT_STRUCTURE_DIR, DEFAULT_TRAIN_SUMMARY_CSV
 
 SPLIT_BY_CHOICES = ("pdbid", "structure_id", "pocket_id")
@@ -35,7 +36,7 @@ class TrainConfig:
     learning_rate: float = 3e-4
     val_fraction: float = 0.0
     esm_dim: int = 256
-    edge_radius: float = 10.0
+    edge_radius: float = DEFAULT_EDGE_RADIUS
     weight_decay: float = 1e-4
     seed: int = 42
     require_ring_edges: bool = False
@@ -60,7 +61,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--esm-dim", type=int, default=256)
-    parser.add_argument("--edge-radius", type=float, default=10.0)
+    parser.add_argument("--edge-radius", type=float, default=DEFAULT_EDGE_RADIUS)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=42)

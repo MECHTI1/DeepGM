@@ -40,8 +40,8 @@ DONOR_ATOMS_BY_RESIDUE = {
 # Stricter default for direct metal coordination; broader thresholds can pull in
 # weak or merely nearby contacts rather than true first-shell binders.
 DEFAULT_FIRST_SHELL_CUTOFF = 2.7
-DEFAULT_POCKET_RADIUS = 8.0
-DEFAULT_EDGE_RADIUS = 6.0
+DEFAULT_POCKET_RADIUS = 10.0 #Try also 8-12, or even more
+DEFAULT_EDGE_RADIUS = 8.0 #Try also 6-8, or even more
 DEFAULT_MULTINUCLEAR_MERGE_DISTANCE = 4.5
 GENERIC_METAL_ELEMENT = "METAL"
 

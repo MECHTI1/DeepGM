@@ -5,6 +5,7 @@ from pathlib import Path
 import torch
 from torch_geometric.loader import DataLoader
 
+from data_structures import DEFAULT_EDGE_RADIUS
 from label_schemes import EC_TOP_LEVEL_LABELS, METAL_TARGET_LABELS, N_EC_CLASSES, N_METAL_CLASSES
 from model import GVPPocketClassifier
 from training.data import (
@@ -31,7 +32,7 @@ def run_smoke_test(
     structure_dir: str | Path = DEFAULT_STRUCTURE_DIR,
     device: str = "cpu",
     esm_dim: int = 256,
-    edge_radius: float = 10.0,
+    edge_radius: float = DEFAULT_EDGE_RADIUS,
     max_cases: int = 4,
     batch_size: int = 2,
 ) -> None:
