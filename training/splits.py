@@ -7,7 +7,7 @@ import torch
 
 from data_structures import PocketRecord
 from label_schemes import EC_TOP_LEVEL_LABELS, METAL_TARGET_LABELS
-from training.config import SPLIT_BY_CHOICES, TrainConfig
+from training.config import TrainConfig, VALID_SPLIT_BY_CHOICES
 from training.data import build_pocket_feature_coverage
 from training.labels import parse_structure_identity
 
@@ -19,20 +19,22 @@ class PocketSplit:
 
 
 def validate_split_by(split_by: str) -> str:
-    if split_by not in SPLIT_BY_CHOICES:
+    if split_by not in VALID_SPLIT_BY_CHOICES:
         raise ValueError(
             f"Unsupported --split-by value: {split_by!r}. "
-            "Expected one of: 'pdbid', 'structure_id', 'pocket_id'."
+            f"Expected one of: {', '.join(repr(choice) for choice in VALID_SPLIT_BY_CHOICES)}."
         )
     return split_by
 
 
 def pocket_split_key(pocket: PocketRecord, split_by: str) -> str:
+    pdbid, chain, _ec = parse_structure_identity(pocket.structure_id)
     if split_by == "structure_id":
         return pocket.structure_id
     if split_by == "pdbid":
-        pdbid, _chain, _ec = parse_structure_identity(pocket.structure_id)
         return pdbid
+    if split_by == "pdbid_chain":
+        return f"{pdbid}__chain_{chain}"
     if split_by == "pocket_id":
         return pocket.pocket_id
     raise AssertionError(f"Unhandled split_by value: {split_by!r}")

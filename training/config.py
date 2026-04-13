@@ -8,9 +8,9 @@ from typing import Any, Sequence
 from data_structures import DEFAULT_EDGE_RADIUS
 from training.data import DEFAULT_STRUCTURE_DIR, DEFAULT_TRAIN_SUMMARY_CSV
 
-SPLIT_BY_CHOICES = ("pdbid", "structure_id", "pocket_id")
-UNSUPPORTED_METAL_POLICY_CHOICES = ("error", "skip")
-SELECTION_METRIC_CHOICES = (
+VALID_SPLIT_BY_CHOICES = ("pdbid", "pdbid_chain", "structure_id", "pocket_id")
+VALID_UNSUPPORTED_METAL_POLICY_CHOICES = ("error", "skip")
+VALID_SELECTION_METRIC_CHOICES = (
     "train_loss",
     "val_loss",
     "val_joint_balanced_acc",
@@ -34,6 +34,7 @@ class TrainConfig:
     epochs: int = 10
     batch_size: int = 8
     learning_rate: float = 3e-4
+    # `0.0` is useful for smoke runs; real training should usually use a nonzero validation split.
     val_fraction: float = 0.0
     esm_dim: int = 256
     edge_radius: float = DEFAULT_EDGE_RADIUS
@@ -73,19 +74,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--unsupported-metal-policy",
         type=str,
         default="error",
-        choices=UNSUPPORTED_METAL_POLICY_CHOICES,
+        choices=VALID_UNSUPPORTED_METAL_POLICY_CHOICES,
     )
     parser.add_argument(
         "--selection-metric",
         type=str,
         default=None,
-        choices=SELECTION_METRIC_CHOICES,
+        choices=VALID_SELECTION_METRIC_CHOICES,
     )
     parser.add_argument(
         "--split-by",
         type=str,
         default="pdbid",
-        choices=SPLIT_BY_CHOICES,
+        choices=VALID_SPLIT_BY_CHOICES,
     )
     return parser
 
@@ -129,10 +130,10 @@ def config_to_payload(config: TrainConfig) -> dict[str, Any]:
 
 
 __all__ = [
-    "SPLIT_BY_CHOICES",
-    "SELECTION_METRIC_CHOICES",
+    "VALID_SPLIT_BY_CHOICES",
+    "VALID_SELECTION_METRIC_CHOICES",
     "TrainConfig",
-    "UNSUPPORTED_METAL_POLICY_CHOICES",
+    "VALID_UNSUPPORTED_METAL_POLICY_CHOICES",
     "build_arg_parser",
     "config_to_payload",
     "parse_args",

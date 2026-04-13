@@ -123,6 +123,22 @@ class TrainingSplitTests(unittest.TestCase):
         self.assertEqual(split.train_pockets, pockets)
         self.assertEqual(split.val_pockets, [])
 
+    def test_split_pockets_keeps_same_pdbid_chain_in_one_split(self) -> None:
+        pockets = [
+            make_pocket(structure_id="1abc__chain_A__EC_1.1.1.1", pocket_id="p1"),
+            make_pocket(structure_id="1abc__chain_A__EC_2.2.2.2", pocket_id="p2"),
+            make_pocket(structure_id="1abc__chain_B__EC_1.1.1.1", pocket_id="p3"),
+            make_pocket(structure_id="2def__chain_A__EC_3.3.3.3", pocket_id="p4"),
+        ]
+
+        split = split_pockets(pockets, val_fraction=0.5, split_by="pdbid_chain", seed=7)
+
+        assignment = {pocket.pocket_id: "train" for pocket in split.train_pockets}
+        assignment.update({pocket.pocket_id: "val" for pocket in split.val_pockets})
+
+        self.assertEqual(set(assignment), {"p1", "p2", "p3", "p4"})
+        self.assertEqual(assignment["p1"], assignment["p2"])
+
 
 class DatasetSummaryTests(unittest.TestCase):
     def test_build_dataset_summary_reports_split_counts_and_label_distribution(self) -> None:
