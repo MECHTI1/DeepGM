@@ -11,23 +11,26 @@ EC_TOP_LEVEL_LABELS = {
 }
 N_EC_CLASSES = len(EC_TOP_LEVEL_LABELS)
 
-# Active metal class mapping for the current catalytic MAHOMES summary:
-# 0 -> Zn
+# Active metal class mapping:
+# 0 -> Mn
 # 1 -> Cu
-# 2 -> merged Co / Fe / Ni class
+# 2 -> Zn
+# 3 -> Class VIII (grouped Fe / Co / Ni)
 METAL_TARGET_LABELS = {
-    0: "Zn",
+    0: "Mn",
     1: "Cu",
-    2: "Co/Fe/Ni",
+    2: "Zn",
+    3: "Class VIII",
 }
 N_METAL_CLASSES = len(METAL_TARGET_LABELS)
 
 METAL_SYMBOL_TO_TARGET = {
-    "ZN": 0,
+    "MN": 0,
     "CU": 1,
-    "CO": 2,
-    "FE": 2,
-    "NI": 2,
+    "ZN": 2,
+    "FE": 3,
+    "CO": 3,
+    "NI": 3,
 }
 
 

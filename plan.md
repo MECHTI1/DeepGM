@@ -145,8 +145,11 @@ Validate:
 
 - whether the chosen selection metric is the right default
 - whether equal task weighting is acceptable
-- whether the current merged metal-label policy is sufficient for the dataset in
-  practice
+- whether the current 4-class metal policy is sufficient in practice:
+  - `Mn`
+  - `Cu`
+  - `Zn`
+  - `Class VIII` for grouped `Fe/Co/Ni`
 
 Why this matters:
 

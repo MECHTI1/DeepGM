@@ -19,24 +19,26 @@ class LabelSchemeTests(unittest.TestCase):
         self.assertEqual(
             METAL_TARGET_LABELS,
             {
-                0: "Zn",
+                0: "Mn",
                 1: "Cu",
-                2: "Co/Fe/Ni",
+                2: "Zn",
+                3: "Class VIII",
             },
         )
-        self.assertEqual(N_METAL_CLASSES, 3)
+        self.assertEqual(N_METAL_CLASSES, 4)
 
     def test_supported_symbols_map_to_active_targets(self) -> None:
-        self.assertEqual(map_site_metal_symbols("ZN"), 0)
+        self.assertEqual(map_site_metal_symbols("MN"), 0)
         self.assertEqual(map_site_metal_symbols("CU"), 1)
-        self.assertEqual(map_site_metal_symbols("CO"), 2)
-        self.assertEqual(map_site_metal_symbols("FE"), 2)
-        self.assertEqual(map_site_metal_symbols("NI"), 2)
+        self.assertEqual(map_site_metal_symbols("ZN"), 2)
+        self.assertEqual(map_site_metal_symbols("CO"), 3)
+        self.assertEqual(map_site_metal_symbols("FE"), 3)
+        self.assertEqual(map_site_metal_symbols("NI"), 3)
 
     def test_unsupported_symbol_can_be_skipped_explicitly(self) -> None:
-        self.assertIsNone(map_site_metal_symbols("MN", unsupported_policy="skip"))
+        self.assertIsNone(map_site_metal_symbols("MO", unsupported_policy="skip"))
 
-    def test_current_summary_has_no_mn_rows(self) -> None:
+    def test_current_summary_metals_stay_within_supported_runtime_set(self) -> None:
         if not SUMMARY_CSV.is_file():
             raise unittest.SkipTest(f"Missing summary CSV: {SUMMARY_CSV}")
 
@@ -44,8 +46,7 @@ class LabelSchemeTests(unittest.TestCase):
             rows = list(csv.DictReader(handle))
 
         counts = Counter(row["metal residue type"].strip().upper() for row in rows)
-        self.assertEqual(counts.get("MN", 0), 0)
-        self.assertEqual(sorted(counts), ["CO", "CU", "FE", "NI", "ZN"])
+        self.assertTrue(set(counts).issubset({"MN", "FE", "CO", "NI", "CU", "ZN"}))
 
 
 if __name__ == "__main__":

@@ -163,8 +163,8 @@ class DatasetSummaryTests(unittest.TestCase):
         self.assertEqual(summary["split_by"], "pdbid")
         self.assertEqual(summary["selection_metric"], "val_joint_balanced_acc")
         self.assertEqual(summary["unsupported_metal_policy"], "error")
-        self.assertEqual(summary["train_metal_distribution"]["Zn"], 1)
-        self.assertEqual(summary["val_metal_distribution"]["Co/Fe/Ni"], 1)
+        self.assertEqual(summary["train_metal_distribution"]["Mn"], 1)
+        self.assertEqual(summary["val_metal_distribution"]["Zn"], 1)
         self.assertEqual(summary["train_feature_coverage"]["esm_residue_coverage"], 1.0)
         self.assertEqual(summary["val_feature_coverage"]["external_feature_residue_coverage"], 1.0)
 

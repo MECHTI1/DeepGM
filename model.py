@@ -237,7 +237,8 @@ class GVPPocketClassifier(nn.Module):
         super().__init__()
         # Current supervised targets:
         # - EC head: first EC digit only, mapped from EC 1..7 to class ids 0..6.
-        # - Metal classifier: 3 classes -> Zn, Cu, and a merged Co/Fe/Ni class.
+        # - Metal classifier: 4 classes -> Mn, Cu, Zn, and Class VIII
+        #   where Fe/Co/Ni are grouped together.
 
         self.node_scalar_encoder = NodeScalarEncoder(n_rbf=16, out_dim=hidden_s)
         self.esm_graph_encoder = ESMGraphEncoder(esm_dim=esm_dim, proj_dim=esm_fusion_dim, dropout=0.1)

@@ -45,13 +45,11 @@ DEFAULT_EDGE_RADIUS = 6.0
 DEFAULT_MULTINUCLEAR_MERGE_DISTANCE = 4.5
 GENERIC_METAL_ELEMENT = "METAL"
 
-# Used only to detect generic transition-metal-centered sites in structures; the
-# true metal identity should stay out of the model inputs when metal type is a
-# prediction target.
+# Used only to detect the metal-centered sites currently supported by the
+# training label policy; the true metal identity should stay out of the model
+# inputs when metal type is a prediction target.
 SUPPORTED_SITE_METAL_ELEMENTS = {
-    "SC", "TI", "V", "CR", "MN", "FE", "CO", "NI", "CU", "ZN",
-    "Y", "ZR", "NB", "MO", "TC", "RU", "RH", "PD", "AG", "CD",
-    "HF", "TA", "W", "RE", "OS", "IR", "PT", "AU", "HG",
+    "MN", "FE", "CO", "NI", "CU", "ZN",
 }
 
 NODE_FEATURES_CURRENTLY_HANDLED = [

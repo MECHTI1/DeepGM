@@ -80,7 +80,7 @@ class TrainingPreflightTests(unittest.TestCase):
         self.assertEqual(report["graph_probe"]["checked_pocket_count"], 2)
         self.assertEqual(report["train_graph_probe"]["checked_pocket_count"], 2)
         self.assertEqual(report["val_graph_probe"]["checked_pocket_count"], 0)
-        self.assertEqual(report["train_metal_label_coverage"]["present_labels"], ["Zn", "Cu"])
+        self.assertEqual(report["train_metal_label_coverage"]["present_labels"], ["Mn", "Cu"])
         self.assertEqual(report["train_ec_label_coverage"]["present_labels"], ["Transferase", "Hydrolase"])
         self.assertEqual(
             report["warnings"],
