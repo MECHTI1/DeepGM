@@ -12,6 +12,7 @@ from training.data import (
     DEFAULT_STRUCTURE_DIR,
     load_smoke_test_pockets_from_dir,
 )
+from training.esm_feature_loading import DEFAULT_ESMC_EMBED_DIM
 from training.graph_dataset import (
     FeatureNormalizationStats,
     PocketGraphDataset,
@@ -31,7 +32,7 @@ from training.loop import (
 def run_smoke_test(
     structure_dir: str | Path = DEFAULT_STRUCTURE_DIR,
     device: str = "cpu",
-    esm_dim: int = 256,
+    esm_dim: int = DEFAULT_ESMC_EMBED_DIM,
     edge_radius: float = DEFAULT_EDGE_RADIUS,
     max_cases: int = 4,
     batch_size: int = 2,

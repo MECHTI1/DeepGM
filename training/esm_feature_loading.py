@@ -11,6 +11,7 @@ from training.labels import parse_structure_identity
 
 
 ESM_FILE_RE = re.compile(r"^(?P<structure_id>.+)_chain_(?P<chain>[^_]+)_esmc\.pt$")
+DEFAULT_ESMC_EMBED_DIM = 960
 ResidueKey = Tuple[str, int, str]
 
 
@@ -210,6 +211,7 @@ def load_esm_lookup_for_structure(
 
 
 __all__ = [
+    "DEFAULT_ESMC_EMBED_DIM",
     "ResidueKey",
     "load_esm_lookup_for_structure",
     "normalize_chain_id",

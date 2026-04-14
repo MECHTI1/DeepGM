@@ -167,7 +167,7 @@ def attach_structure_features_to_pocket(
                 feature_sources.external_feature_lookup,
                 strict=require_external_features,
             )
-    except KeyError as exc:
+    except (KeyError, ValueError) as exc:
         raise ValueError(f"Feature alignment error for {structure_path}: {exc}") from exc
 
 

@@ -17,7 +17,13 @@ def attach_esm_embeddings(
     for residue in pocket.residues:
         key = residue.residue_id()
         if key in esm_lookup:
-            residue.esm_embedding = esm_lookup[key].float()
+            embedding = esm_lookup[key].float()
+            if embedding.dim() != 1 or embedding.size(0) != esm_dim:
+                raise ValueError(
+                    f"ESM embedding dimension mismatch for residue key {key}: "
+                    f"got shape {tuple(embedding.shape)}, expected ({esm_dim},)"
+                )
+            residue.esm_embedding = embedding
             residue.has_esm_embedding = True
             continue
 

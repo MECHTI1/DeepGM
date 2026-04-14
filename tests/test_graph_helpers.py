@@ -68,6 +68,18 @@ class GraphFeatureUtilsTests(unittest.TestCase):
         self.assertFalse(pocket.residues[0].has_esm_embedding)
         self.assertEqual(float(pocket.residues[0].esm_embedding.sum().item()), 0.0)
 
+    def test_attach_esm_embeddings_rejects_dimension_mismatch(self) -> None:
+        residue = make_residue(chain_id="A", resseq=1, ca=(0.0, 0.0, 0.0))
+        pocket = make_pocket([residue])
+
+        with self.assertRaisesRegex(ValueError, "ESM embedding dimension mismatch"):
+            attach_esm_embeddings(
+                pocket,
+                esm_lookup={("A", 1, ""): torch.ones(3, dtype=torch.float32)},
+                esm_dim=4,
+                zero_if_missing=True,
+            )
+
     def test_attach_external_residue_features_marks_present_lookup(self) -> None:
         residue = make_residue(chain_id="A", resseq=2, ca=(0.0, 0.0, 0.0))
         pocket = make_pocket([residue])

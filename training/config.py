@@ -7,6 +7,7 @@ from typing import Any, Sequence
 
 from data_structures import DEFAULT_EDGE_RADIUS
 from training.data import DEFAULT_STRUCTURE_DIR, DEFAULT_TRAIN_SUMMARY_CSV
+from training.esm_feature_loading import DEFAULT_ESMC_EMBED_DIM
 
 VALID_SPLIT_BY_CHOICES = ("pdbid", "pdbid_chain", "structure_id", "pocket_id")
 VALID_UNSUPPORTED_METAL_POLICY_CHOICES = ("error", "skip")
@@ -36,7 +37,7 @@ class TrainConfig:
     learning_rate: float = 3e-4
     # `0.0` is useful for smoke runs; real training should usually use a nonzero validation split.
     val_fraction: float = 0.0
-    esm_dim: int = 256
+    esm_dim: int = DEFAULT_ESMC_EMBED_DIM
     edge_radius: float = DEFAULT_EDGE_RADIUS
     weight_decay: float = 1e-4
     seed: int = 42
@@ -61,7 +62,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--esm-dim", type=int, default=256)
+    parser.add_argument("--esm-dim", type=int, default=DEFAULT_ESMC_EMBED_DIM)
     parser.add_argument("--edge-radius", type=float, default=DEFAULT_EDGE_RADIUS)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)

@@ -8,6 +8,7 @@ import torch
 
 from data_structures import PocketRecord, ResidueRecord
 from training.config import parse_args
+from training.esm_feature_loading import DEFAULT_ESMC_EMBED_DIM
 from training.graph_dataset import FeatureNormalizationStats
 from training.run import (
     PocketSplit,
@@ -62,6 +63,7 @@ class TrainConfigParsingTests(unittest.TestCase):
         config = parse_args([])
 
         self.assertEqual(config.val_fraction, 0.0)
+        self.assertEqual(config.esm_dim, DEFAULT_ESMC_EMBED_DIM)
         self.assertEqual(config.selection_metric, "train_loss")
 
     def test_parse_args_builds_expected_config(self) -> None:
