@@ -10,7 +10,6 @@ from typing import Any
 import torch
 from torch_geometric.loader import DataLoader
 
-from data_structures import PocketRecord
 from label_schemes import EC_TOP_LEVEL_LABELS, METAL_TARGET_LABELS, N_EC_CLASSES, N_METAL_CLASSES
 from model import GVPPocketClassifier
 from project_paths import resolve_runs_dir
@@ -23,7 +22,6 @@ from training.graph_dataset import (
     compute_feature_normalization_stats,
 )
 from training.loop import (
-    accuracy_from_logits,
     balanced_class_weights_from_pockets,
     classification_metrics_from_logits,
     evaluate_epoch_with_predictions,
@@ -62,30 +60,6 @@ def build_run_dir(config: TrainConfig) -> Path:
 
 def save_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-def accuracy_or_none(predictions: dict[str, Any], logits_key: str, target_key: str) -> float | None:
-    if target_key not in predictions:
-        return None
-    return accuracy_from_logits(predictions[logits_key], predictions[target_key])
-
-
-def build_dataloader(
-    pockets: list[PocketRecord],
-    config: TrainConfig,
-    normalization_stats: FeatureNormalizationStats,
-    shuffle: bool,
-    precomputed_data=None,
-) -> DataLoader:
-    dataset = PocketGraphDataset(
-        pockets,
-        esm_dim=config.esm_dim,
-        edge_radius=config.edge_radius,
-        normalization_stats=normalization_stats,
-        require_ring_edges=config.require_ring_edges,
-        precomputed_data=precomputed_data,
-    )
-    return DataLoader(dataset, batch_size=config.batch_size, shuffle=shuffle)
 
 
 def validate_training_configuration(config: TrainConfig) -> None:
@@ -273,20 +247,30 @@ def prepare_run(config: TrainConfig) -> PreparedRun:
     )
     run_dir = build_run_dir(config)
     normalization_stats = compute_feature_normalization_stats(train_graphs, clamp_value=5.0)
-    train_loader = build_dataloader(
-        split.train_pockets,
-        config,
-        normalization_stats,
+    train_loader = DataLoader(
+        PocketGraphDataset(
+            split.train_pockets,
+            esm_dim=config.esm_dim,
+            edge_radius=config.edge_radius,
+            normalization_stats=normalization_stats,
+            require_ring_edges=config.require_ring_edges,
+            precomputed_data=train_graphs,
+        ),
+        batch_size=config.batch_size,
         shuffle=True,
-        precomputed_data=train_graphs,
     )
     val_loader = (
-        build_dataloader(
-            split.val_pockets,
-            config,
-            normalization_stats,
+        DataLoader(
+            PocketGraphDataset(
+                split.val_pockets,
+                esm_dim=config.esm_dim,
+                edge_radius=config.edge_radius,
+                normalization_stats=normalization_stats,
+                require_ring_edges=config.require_ring_edges,
+                precomputed_data=val_graphs,
+            ),
+            batch_size=config.batch_size,
             shuffle=False,
-            precomputed_data=val_graphs,
         )
         if split.val_pockets
         else None
@@ -414,24 +398,3 @@ def run_training(config: TrainConfig) -> Path:
     history, best_checkpoint = train_and_select_checkpoint(prepared, config)
     persist_run_outputs(prepared, history=history, best_checkpoint=best_checkpoint)
     return prepared.run_dir
-
-
-__all__ = [
-    "PocketSplit",
-    "accuracy_or_none",
-    "build_dataset_summary",
-    "build_dataloader",
-    "build_run_dir",
-    "checkpoint_payload",
-    "evaluate_split_metrics",
-    "format_epoch_log",
-    "metric_sort_value",
-    "persist_run_outputs",
-    "prepare_run",
-    "run_training",
-    "save_json",
-    "set_seed",
-    "split_pockets",
-    "train_and_select_checkpoint",
-    "validate_training_configuration",
-]
