@@ -3,11 +3,10 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import DefaultDict, Dict, Iterable, List, Tuple
+from typing import DefaultDict, Dict, Iterable, List, Optional, Tuple
 
+from training.esm_feature_loading import ResidueKey
 
-ResidueKey = Tuple[str, int, str]
-StructureFeatureLookup = Dict[str, Dict[ResidueKey, Dict[str, float]]]
 
 RELEVANT_FEATURE_NAMES = (
     "SASA",
@@ -78,10 +77,6 @@ def iter_structure_dirs(root_dir: str | Path) -> Iterable[Path]:
                 yield structure_dir
 
 
-def parse_structure_name_from_dir(structure_dir: Path) -> str:
-    return structure_dir.name
-
-
 def parse_residue_order_from_pdb(pdb_path: Path) -> List[Tuple[str, str, int, str]]:
     residues: List[Tuple[str, str, int, str]] = []
     seen = set()
@@ -148,7 +143,7 @@ def parse_pose_energy_rows(
             if pose_idx < 1 or pose_idx > len(residue_order):
                 continue
 
-            resname, chain_id, resseq, icode = residue_order[pose_idx - 1]
+            _resname, chain_id, resseq, icode = residue_order[pose_idx - 1]
             key = (chain_id, resseq, icode)
             row_lookup = dict(zip(header[1:], parts[1:]))
 
@@ -182,7 +177,7 @@ def parse_residue_sasa(
             if pose_idx < 1 or pose_idx > len(residue_order):
                 continue
 
-            _, chain_id, resseq, icode = residue_order[pose_idx - 1]
+            _resname, chain_id, resseq, icode = residue_order[pose_idx - 1]
             sasa_by_key[(chain_id, resseq, icode)] = float(parts[1])
 
     return sasa_by_key
@@ -279,7 +274,7 @@ def build_residue_aliases(
 
 def structure_dir_to_feature_lookup(structure_dir: str | Path) -> Dict[ResidueKey, Dict[str, float]]:
     structure_path = Path(structure_dir)
-    structure_name = parse_structure_name_from_dir(structure_path)
+    structure_name = structure_path.name
     chain_id = infer_chain_id(structure_name)
 
     pdb_path = structure_path / f"{structure_name}.pdb"
@@ -324,81 +319,3 @@ def structure_dir_to_feature_lookup(structure_dir: str | Path) -> Dict[ResidueKe
                 set_feature_value(residue_features, key, feature_name, value)
 
     return residue_features
-
-
-def return_relevant_features_val(root_dir: str | Path) -> StructureFeatureLookup:
-    """
-    Scan all MAHOMES job folders under `root_dir` and return residue-level external
-    features for each structure directory.
-
-    Returned shape:
-        {
-            "1a0e__chain_A__EC_5.3.1.5": {
-                ("A", 87, ""): {
-                    "SASA": ...,
-                    "SASA_missing": 0.0 or 1.0,
-                    ...
-                },
-                ...
-            },
-            ...
-        }
-    """
-    lookup: StructureFeatureLookup = {}
-
-    for structure_dir in iter_structure_dirs(root_dir):
-        structure_name = parse_structure_name_from_dir(structure_dir)
-        try:
-            lookup[structure_name] = structure_dir_to_feature_lookup(structure_dir)
-        except FileNotFoundError:
-            continue
-
-    return lookup
-
-
-def _run_demo(
-    root_dir: str | Path,
-    limit: int,
-    example_structure: str,
-    example_key: ResidueKey,
-) -> None:
-    root = Path(root_dir)
-    if not root.is_dir():
-        raise FileNotFoundError(f"Root directory does not exist: {root}")
-
-    result: StructureFeatureLookup = {}
-    for index, structure_dir in enumerate(iter_structure_dirs(root)):
-        result[structure_dir.name] = structure_dir_to_feature_lookup(structure_dir)
-        if limit > 0 and index + 1 >= limit:
-            break
-
-    print(f"Scanned structures: {len(result)}")
-    print("Structure names:", ", ".join(result.keys()))
-
-    if example_structure not in result:
-        print(f"Example structure '{example_structure}' was not included in the limited scan.")
-        return
-
-    residue_lookup = result[example_structure]
-    print(f"Residues extracted for {example_structure}: {len(residue_lookup)}")
-
-    if example_key not in residue_lookup:
-        print(f"Example residue {example_key} was not found in {example_structure}.")
-        return
-
-    feature_row = residue_lookup[example_key]
-    print(f"Example residue: {example_key}")
-    for feature_name in RELEVANT_FEATURE_NAMES:
-        print(
-            f"  {feature_name}: {feature_row[feature_name]} "
-            f"(missing={feature_row[f'{feature_name}_missing']})"
-        )
-
-
-if __name__ == "__main__":
-    _run_demo(
-        root_dir="/media/Data/pinmymetal_sets/mahomes/train_set",
-        limit=1,
-        example_structure="1a0e__chain_A__EC_5.3.1.5",
-        example_key=("A", 87, ""),
-    )

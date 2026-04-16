@@ -14,6 +14,7 @@ from training.esm_feature_loading import (
     load_esm_lookup_for_structure,
     residue_keys_for_structure_chain,
 )
+from training.external_feature_loading import structure_dir_to_feature_lookup
 
 
 SAMPLE_STRUCTURE_ID = "1a0e__chain_A__EC_5.3.1.5"
@@ -128,6 +129,15 @@ class TrainingDataLoadingTests(unittest.TestCase):
             0.0,
         )
         self.assertEqual(result.feature_report["feature_fallbacks"], [])
+
+    def test_structure_dir_to_feature_lookup_parses_external_features(self) -> None:
+        feature_lookup = structure_dir_to_feature_lookup(SAMPLE_FEATURE_DIR)
+
+        self.assertGreater(len(feature_lookup), 0)
+        sample_residue = next(iter(feature_lookup.values()))
+        self.assertIn("SASA", sample_residue)
+        self.assertIn("SASA_missing", sample_residue)
+        self.assertIn("fa_sol", sample_residue)
 
     def test_training_loader_raises_when_required_esm_is_missing(self) -> None:
         with self.assertRaisesRegex(ValueError, "Missing required ESM embeddings"):

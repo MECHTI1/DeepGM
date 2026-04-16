@@ -9,7 +9,7 @@ from torch import Tensor
 from data_structures import PocketRecord
 from graph.feature_utils import attach_esm_embeddings, attach_external_residue_features
 from project_paths import resolve_embeddings_dir
-from temp_helper.return_relevant_features_val import structure_dir_to_feature_lookup
+from training.external_feature_loading import structure_dir_to_feature_lookup
 from training.esm_feature_loading import ResidueKey, load_esm_lookup_for_structure
 
 
