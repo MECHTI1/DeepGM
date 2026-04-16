@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Smoke-test runner for the training pipeline."""
+
 from pathlib import Path
 
 import torch
@@ -8,10 +10,8 @@ from torch_geometric.loader import DataLoader
 from data_structures import DEFAULT_EDGE_RADIUS
 from label_schemes import EC_TOP_LEVEL_LABELS, METAL_TARGET_LABELS, N_EC_CLASSES, N_METAL_CLASSES
 from model import GVPPocketClassifier
-from training.data import (
-    DEFAULT_STRUCTURE_DIR,
-    load_smoke_test_pockets_from_dir,
-)
+from training.data import load_smoke_test_pockets_from_dir
+from training.defaults import DEFAULT_STRUCTURE_DIR
 from training.esm_feature_loading import DEFAULT_ESMC_EMBED_DIM
 from training.graph_dataset import (
     FeatureNormalizationStats,

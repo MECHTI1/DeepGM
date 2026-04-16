@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from data_structures import PocketRecord
+from training.defaults import DEFAULT_STRUCTURE_DIR, DEFAULT_TRAIN_SUMMARY_CSV
 from training.esm_feature_loading import DEFAULT_ESMC_EMBED_DIM
-from project_paths import CATALYTIC_ONLY_SUMMARY_CSV, MAHOMES_TRAIN_SET_DIR
 from training.feature_sources import resolve_runtime_feature_paths
 from training.site_filter import resolve_allowed_site_keys
 from training.structure_loading import (
@@ -24,10 +24,6 @@ from training.structure_loading import (
     load_structure_pockets,
     pocket_has_full_supervision,
 )
-
-
-DEFAULT_STRUCTURE_DIR = MAHOMES_TRAIN_SET_DIR
-DEFAULT_TRAIN_SUMMARY_CSV = CATALYTIC_ONLY_SUMMARY_CSV
 
 
 @dataclass(frozen=True)
