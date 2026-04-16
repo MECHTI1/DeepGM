@@ -63,7 +63,7 @@ def make_graphable_pocket(*, pocket_id: str, shift: float, y_metal: int, y_ec: i
 
 
 class TrainingPreflightTests(unittest.TestCase):
-    def test_run_preflight_checks_builds_report_and_graph_probe(self) -> None:
+    def test_run_preflight_checks_builds_report(self) -> None:
         split = PocketSplit(
             train_pockets=[
                 make_graphable_pocket(pocket_id="train-a", shift=0.0, y_metal=0, y_ec=1),
@@ -75,19 +75,14 @@ class TrainingPreflightTests(unittest.TestCase):
 
         report = run_preflight_checks(split, config)
 
-        self.assertEqual(report["train_pocket_count"], 2)
-        self.assertEqual(report["val_pocket_count"], 0)
-        self.assertEqual(report["graph_probe"]["checked_pocket_count"], 2)
-        self.assertEqual(report["train_graph_probe"]["checked_pocket_count"], 2)
-        self.assertEqual(report["val_graph_probe"]["checked_pocket_count"], 0)
-        self.assertEqual(report["train_metal_label_coverage"]["present_labels"], ["Mn", "Cu"])
-        self.assertEqual(report["train_ec_label_coverage"]["present_labels"], ["Transferase", "Hydrolase"])
         self.assertEqual(
-            report["warnings"],
-            [
-                "Train split has zero ESM residue coverage.",
-                "Train split has zero external-feature residue coverage.",
-            ],
+            report,
+            {
+                "warnings": [
+                    "Training split has no ESM residue coverage.",
+                    "Training split has no external feature residue coverage.",
+                ]
+            },
         )
 
     def test_run_preflight_checks_rejects_pocket_without_residues(self) -> None:
@@ -107,7 +102,7 @@ class TrainingPreflightTests(unittest.TestCase):
         )
         config = parse_args([])
 
-        with self.assertRaisesRegex(ValueError, "train pockets without residues"):
+        with self.assertRaisesRegex(ValueError, "training pockets without residues"):
             run_preflight_checks(split, config)
 
     def test_run_preflight_checks_rejects_non_graphable_validation_pocket(self) -> None:

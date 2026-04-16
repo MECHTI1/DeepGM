@@ -241,7 +241,6 @@ def prepare_run(config: TrainConfig) -> PreparedRun:
     dataset_summary["preflight"] = run_preflight_checks(
         split,
         config,
-        feature_load_report=load_result.feature_report,
         train_graphs=train_graphs,
         val_graphs=val_graphs,
     )

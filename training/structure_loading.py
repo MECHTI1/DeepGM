@@ -45,14 +45,12 @@ def build_load_report(
     *,
     pockets: list[PocketRecord],
     structure_files: list[Path],
-    skipped_structures: list[dict[str, str]],
     feature_fallbacks: list[dict[str, str]],
     skipped_pockets: list[dict[str, str]],
 ) -> dict[str, Any]:
     return build_feature_load_report(
         pockets=pockets,
         total_structure_files=len(structure_files),
-        skipped_structures=skipped_structures,
         feature_fallbacks=feature_fallbacks,
         skipped_pockets=skipped_pockets,
     )

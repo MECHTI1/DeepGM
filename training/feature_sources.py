@@ -206,7 +206,6 @@ def build_feature_load_report(
     *,
     pockets: List[PocketRecord],
     total_structure_files: int,
-    skipped_structures: List[Dict[str, str]],
     feature_fallbacks: List[Dict[str, str]],
     skipped_pockets: List[Dict[str, str]],
 ) -> Dict[str, object]:
@@ -217,7 +216,6 @@ def build_feature_load_report(
     return {
         "total_structure_files": total_structure_files,
         "loaded_structure_files": len(loaded_structures),
-        "skipped_structures": skipped_structures,
         "feature_fallbacks": feature_fallbacks,
         "skipped_pockets": skipped_pockets,
         **build_pocket_feature_coverage(pockets),

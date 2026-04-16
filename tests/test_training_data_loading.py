@@ -8,10 +8,10 @@ from pathlib import Path
 import torch
 
 from graph.construction import parse_structure_file
-from training.data import (
+from training.data import load_training_pockets_with_report_from_dir
+from training.esm_feature_loading import (
     build_embedding_payload,
     load_esm_lookup_for_structure,
-    load_training_pockets_with_report_from_dir,
     residue_keys_for_structure_chain,
 )
 

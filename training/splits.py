@@ -8,7 +8,7 @@ import torch
 from data_structures import PocketRecord
 from label_schemes import EC_TOP_LEVEL_LABELS, METAL_TARGET_LABELS
 from training.config import TrainConfig, VALID_SPLIT_BY_CHOICES
-from training.data import build_pocket_feature_coverage
+from training.feature_sources import build_pocket_feature_coverage
 from training.labels import parse_structure_identity
 
 
