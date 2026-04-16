@@ -43,6 +43,10 @@ The active runtime path is organized around:
 - `training/splits.py`
 - `graph/construction.py`
 - `graph/structure_parsing.py`
+- `graph/shell_roles.py`
+- `graph/edge_geometry.py`
+- `graph/edge_sources.py`
+- `graph/edge_postprocess.py`
 - `graph/edge_building.py`
 - `graph/feature_utils.py`
 - `graph/ring_edges.py`
@@ -75,7 +79,10 @@ bug fixing. The project no longer needs a broad rewrite.
   input `ResidueRecord` objects.
 - Radius-edge construction now avoids a blind all-pairs scan by using a
   broad-phase spatial filter before exact atom-level checks.
-- RING residue-residue symmetry and residue-metal handling are explicit.
+- Logical residue-pair edges are now merged across sources before final tensor
+  expansion for message passing.
+- Edge internals are split into focused modules for geometry, edge sources,
+  shell-role logic, and edge post-processing.
 
 ### Training behavior
 
@@ -90,7 +97,7 @@ bug fixing. The project no longer needs a broad rewrite.
 ### Tests
 
 - The repo has a real `unittest` suite under `tests/`.
-- Current passing baseline: 40 tests.
+- Current passing baseline with the project interpreter: 46 tests, 6 skipped.
 - Coverage exists for label logic, site filtering, training data loading, graph
   helpers, runtime graph construction, normalization, training orchestration,
   and graph-to-model smoke behavior.
@@ -98,7 +105,7 @@ bug fixing. The project no longer needs a broad rewrite.
 Standard test command:
 
 ```bash
-./.venv/bin/python -m unittest discover -s tests
+/home/mechti/miniconda3/envs/deepgm-py312/bin/python -m unittest discover -s tests
 ```
 
 ## Current Priorities

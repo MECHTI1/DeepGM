@@ -88,7 +88,9 @@ def summarize_graph_dataset(
             require_ring_edges=require_ring_edges,
         )
         edge_pairs = list(zip(data.edge_index[0].tolist(), data.edge_index[1].tolist()))
+        radius_idx = EDGE_SOURCE_TO_INDEX["radius"]
         ring_mask = data.edge_source_type[:, ring_idx] > 0.5
+        radius_mask = data.edge_source_type[:, radius_idx] > 0.5
         report.append(
             {
                 "pocket_id": pocket.pocket_id,
@@ -96,7 +98,7 @@ def summarize_graph_dataset(
                 "is_multinuclear": bool(pocket.is_multinuclear()),
                 "n_residues": int(data.pos.size(0)),
                 "n_edges": int(data.edge_index.size(1)),
-                "n_radius_edges": int((~ring_mask).sum().item()),
+                "n_radius_edges": int(radius_mask.sum().item()),
                 "n_ring_edges": int(ring_mask.sum().item()),
                 "n_duplicate_pairs": len(edge_pairs) - len(set(edge_pairs)),
             }

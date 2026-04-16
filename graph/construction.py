@@ -17,25 +17,16 @@ from featurization import (
     residue_to_stage1_node_features,
 )
 from graph.edge_building import (
-    build_pair_edge_geometry,
     build_radius_edge_records_from_residues,
-    build_radius_graph_from_residues,
     build_ring_interaction_edge_records,
     compute_shell_roles,
-    radius_edge_records_from_index,
+    merge_edge_records,
     stack_edge_features,
 )
-from graph.feature_utils import (
-    attach_esm_embeddings,
-    attach_external_residue_features,
-)
-from graph.ring_edges import (
-    canonical_ring_edges_output_path,
-)
-from graph.structure_parsing import (
-    extract_metal_pockets_from_structure,
-    parse_structure_file,
-)
+from graph.ring_edges import canonical_ring_edges_output_path
+from graph.structure_parsing import extract_metal_pockets_from_structure, parse_structure_file
+
+
 def stack_node_features(node_dicts: List[Dict[str, Tensor]]) -> Dict[str, Tensor]:
     return {
         "x_esm": torch.stack([node["x_esm"] for node in node_dicts], dim=0),
@@ -79,6 +70,7 @@ def pocket_to_pyg_data(
 
     edge_records = build_radius_edge_records_from_residues(pocket, edge_radius)
     edge_records.extend(build_ring_interaction_edge_records(pocket, require_ring_edges=require_ring_edges))
+    edge_records = merge_edge_records(edge_records)
     if not edge_records:
         raise ValueError(
             f"Pocket {pocket.pocket_id} produced a graph with no edges at edge_radius={edge_radius}. "

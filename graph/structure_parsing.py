@@ -149,12 +149,17 @@ def find_pocket_residues_near_metal_cluster(
     all_residues: List[ResidueRecord],
     metal_cluster: List[MetalAtomRecord],
     pocket_radius: float,
+    residue_coord_tensors: Optional[List[Tensor]] = None,
 ) -> List[ResidueRecord]:
     cluster_tensor = torch.stack([record.coord.float() for record in metal_cluster], dim=0)
     pocket_residues = []
+    if residue_coord_tensors is None:
+        residue_coord_tensors = [
+            torch.stack([coord.float() for coord in residue_record.atoms.values()], dim=0)
+            for residue_record in all_residues
+        ]
 
-    for residue_record in all_residues:
-        residue_coords = torch.stack(list(residue_record.atoms.values()), dim=0)
+    for residue_record, residue_coords in zip(all_residues, residue_coord_tensors):
         diff = residue_coords[:, None, :] - cluster_tensor[None, :, :]
         if safe_norm(diff, dim=-1).min().item() <= pocket_radius:
             pocket_residues.append(residue_record)
@@ -168,11 +173,13 @@ def pocket_record_from_metal_cluster(
     metal_cluster: List[MetalAtomRecord],
     all_residues: List[ResidueRecord],
     pocket_radius: float,
+    residue_coord_tensors: Optional[List[Tensor]] = None,
 ) -> Optional[PocketRecord]:
     pocket_residues = find_pocket_residues_near_metal_cluster(
         all_residues,
         metal_cluster,
         pocket_radius=pocket_radius,
+        residue_coord_tensors=residue_coord_tensors,
     )
     if not pocket_residues:
         return None
@@ -204,6 +211,10 @@ def extract_metal_pockets_from_structure(
 ) -> List[PocketRecord]:
     sid = structure_id or getattr(structure, "id", "unknown_structure")
     all_residues, metal_records = collect_structure_residues_and_metals(structure)
+    residue_coord_tensors = [
+        torch.stack([coord.float() for coord in residue_record.atoms.values()], dim=0)
+        for residue_record in all_residues
+    ]
     metal_clusters = cluster_metal_records(metal_records, merge_distance=multinuclear_merge_distance)
 
     pockets: List[PocketRecord] = []
@@ -214,6 +225,7 @@ def extract_metal_pockets_from_structure(
             metal_cluster=metal_cluster,
             all_residues=all_residues,
             pocket_radius=pocket_radius,
+            residue_coord_tensors=residue_coord_tensors,
         )
         if pocket is not None:
             pockets.append(pocket)
