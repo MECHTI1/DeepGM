@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from data_structures import PocketRecord
 from training.defaults import DEFAULT_STRUCTURE_DIR, DEFAULT_TRAIN_SUMMARY_CSV
 from training.esm_feature_loading import DEFAULT_ESMC_EMBED_DIM
-from training.feature_sources import resolve_runtime_feature_paths
+from training.feature_paths import resolve_runtime_feature_paths
 from training.site_filter import resolve_allowed_site_keys
 from training.structure_loading import (
     build_load_report,
