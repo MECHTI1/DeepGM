@@ -66,12 +66,3 @@ def pocket_matches_allowed_sites(
         if (pdbid, ec_number, f"{str(chain_id).strip()}_{normalized_resseq}") in allowed_site_keys:
             return True
     return False
-
-
-__all__ = [
-    "SUMMARY_REQUIRED_COLUMNS",
-    "SiteKey",
-    "load_allowed_site_keys",
-    "pocket_matches_allowed_sites",
-    "resolve_allowed_site_keys",
-]

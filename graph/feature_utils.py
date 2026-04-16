@@ -49,9 +49,3 @@ def attach_external_residue_features(
         if strict:
             raise KeyError(f"Missing external feature dict for residue key {key}")
         residue.has_external_features = False
-
-
-__all__ = [
-    "attach_esm_embeddings",
-    "attach_external_residue_features",
-]

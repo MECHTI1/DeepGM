@@ -208,16 +208,3 @@ def load_esm_lookup_for_structure(
     if not found_files:
         raise FileNotFoundError(f"No ESM embedding file found for {structure_path.stem} under {embeddings_dir}.")
     return esm_lookup
-
-
-__all__ = [
-    "DEFAULT_ESMC_EMBED_DIM",
-    "ResidueKey",
-    "load_esm_lookup_for_structure",
-    "normalize_chain_id",
-    "normalize_icode",
-    "residue_keys_for_structure_chain",
-    "build_embedding_payload",
-    "deserialize_residue_ids",
-    "serialize_residue_ids",
-]

@@ -97,16 +97,3 @@ def run_smoke_test(
     if all_have_supervision and "ec_y" in result:
         print("EC acc:", accuracy_from_logits(result["ec_logits"], result["ec_y"]))
     print("Smoke test completed successfully.")
-
-
-__all__ = [
-    "FeatureNormalizationStats",
-    "PocketGraphDataset",
-    "accuracy_from_logits",
-    "balanced_class_weights_from_pockets",
-    "evaluate_epoch",
-    "predict_batch",
-    "run_smoke_test",
-    "summarize_graph_dataset",
-    "train_epoch",
-]

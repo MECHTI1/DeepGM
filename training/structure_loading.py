@@ -16,14 +16,6 @@ from training.feature_sources import (
 )
 from training.labels import infer_metal_target_class_from_pocket, parse_ec_top_level_from_structure_path
 from training.site_filter import SiteKey, pocket_matches_allowed_sites
-
-
-def assign_supervision_labels(pocket: PocketRecord, ec_label: int | None) -> None:
-    pocket.y_metal = infer_metal_target_class_from_pocket(pocket)
-    if ec_label is not None:
-        pocket.y_ec = ec_label
-
-
 def pocket_has_full_supervision(pocket: PocketRecord) -> bool:
     return pocket.y_metal is not None and pocket.y_ec is not None
 
@@ -145,13 +137,3 @@ def load_structure_pockets(
         kept_pockets.append(pocket)
 
     return kept_pockets, feature_fallbacks, skipped_pockets
-
-
-__all__ = [
-    "assign_supervision_labels",
-    "build_load_report",
-    "find_structure_files",
-    "is_auxiliary_structure_file",
-    "load_structure_pockets",
-    "pocket_has_full_supervision",
-]

@@ -445,20 +445,3 @@ def stack_edge_features(edge_records: list[dict[str, Any]]) -> dict[str, Tensor]
         "edge_interaction_type": torch.stack([record["interaction_type"] for record in edge_records], dim=0),
         "edge_source_type": torch.stack([record["source_type"] for record in edge_records], dim=0),
     }
-
-
-__all__ = [
-    "annotate_shell_roles",
-    "build_pair_edge_geometry",
-    "build_radius_edge_records_from_residues",
-    "build_radius_graph_from_residues",
-    "build_ring_interaction_edge_records",
-    "candidate_residue_pairs_within_radius",
-    "closest_points_between_residues",
-    "compute_shell_roles",
-    "radius_edge_records_from_index",
-    "residue_atom_coords",
-    "RING_EDGE_SYMMETRY_POLICY",
-    "RING_METAL_CONTACT_POLICY",
-    "stack_edge_features",
-]

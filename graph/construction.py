@@ -36,23 +36,6 @@ from graph.structure_parsing import (
     extract_metal_pockets_from_structure,
     parse_structure_file,
 )
-
-__all__ = [
-    "attach_esm_embeddings",
-    "attach_external_residue_features",
-    "build_pair_edge_geometry",
-    "build_radius_edge_records_from_residues",
-    "build_radius_graph_from_residues",
-    "build_ring_interaction_edge_records",
-    "canonical_ring_edges_output_path",
-    "compute_shell_roles",
-    "extract_metal_pockets_from_structure",
-    "parse_structure_file",
-    "pocket_to_pyg_data",
-    "save_pocket_metadata_json",
-]
-
-
 def stack_node_features(node_dicts: List[Dict[str, Tensor]]) -> Dict[str, Tensor]:
     return {
         "x_esm": torch.stack([node["x_esm"] for node in node_dicts], dim=0),

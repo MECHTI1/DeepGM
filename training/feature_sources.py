@@ -220,13 +220,3 @@ def build_feature_load_report(
         "skipped_pockets": skipped_pockets,
         **build_pocket_feature_coverage(pockets),
     }
-
-
-__all__ = [
-    "StructureFeatureSources",
-    "attach_structure_features_to_pocket",
-    "build_feature_load_report",
-    "build_pocket_feature_coverage",
-    "load_structure_feature_sources",
-    "resolve_runtime_feature_paths",
-]
