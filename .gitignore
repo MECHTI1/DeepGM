@@ -1,6 +1,7 @@
 .data/
 .old/
 .Study_Plan.md
+.Extended_explanation.md
 .TODO.md
 __pycache__/
 *.py[cod]
