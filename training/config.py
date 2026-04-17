@@ -44,7 +44,9 @@ class TrainConfig:
     require_ring_edges: bool = False
     split_by: str = "pdbid"
     require_esm_embeddings: bool = True
+    prepare_missing_esm_embeddings: bool = True
     require_external_features: bool = True
+    prepare_missing_ring_edges: bool = False
     unsupported_metal_policy: str = "error"
     selection_metric: str = "train_loss"
 
@@ -69,7 +71,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--require-ring-edges", action="store_true")
     parser.add_argument("--allow-missing-esm-embeddings", action="store_true")
+    parser.add_argument("--no-prepare-missing-esm-embeddings", action="store_true")
     parser.add_argument("--allow-missing-external-features", action="store_true")
+    parser.add_argument("--prepare-missing-ring-edges", action="store_true")
     parser.add_argument("--val-fraction", type=float, default=0.0)
     parser.add_argument(
         "--unsupported-metal-policy",
@@ -117,7 +121,9 @@ def parse_args(argv: Sequence[str] | None = None) -> TrainConfig:
         val_fraction=args.val_fraction,
         split_by=args.split_by,
         require_esm_embeddings=not args.allow_missing_esm_embeddings,
+        prepare_missing_esm_embeddings=not args.no_prepare_missing_esm_embeddings,
         require_external_features=not args.allow_missing_external_features,
+        prepare_missing_ring_edges=args.prepare_missing_ring_edges,
         unsupported_metal_policy=args.unsupported_metal_policy,
         selection_metric=selection_metric,
     )

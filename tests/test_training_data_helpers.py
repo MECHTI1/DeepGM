@@ -92,6 +92,11 @@ class TrainingStructureLoadingTests(unittest.TestCase):
             auxiliary_structure = auxiliary_dir / "aux_structure.pdb"
             auxiliary_structure.write_text("ATOM\n", encoding="utf-8")
 
+            helper_dir = nested_root / "feature_outputs"
+            helper_dir.mkdir()
+            helper_structure = helper_dir / "ligand_fragment.pdb"
+            helper_structure.write_text("ATOM\n", encoding="utf-8")
+
             structure_files = find_structure_files(root)
 
             self.assertEqual(structure_files, [nested_structure, direct_structure])

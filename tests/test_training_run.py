@@ -65,6 +65,8 @@ class TrainConfigParsingTests(unittest.TestCase):
         self.assertEqual(config.val_fraction, 0.0)
         self.assertEqual(config.esm_dim, DEFAULT_ESMC_EMBED_DIM)
         self.assertEqual(config.selection_metric, "train_loss")
+        self.assertTrue(config.prepare_missing_esm_embeddings)
+        self.assertFalse(config.prepare_missing_ring_edges)
 
     def test_parse_args_builds_expected_config(self) -> None:
         config = parse_args(
@@ -80,6 +82,8 @@ class TrainConfigParsingTests(unittest.TestCase):
                 "--split-by",
                 "structure_id",
                 "--allow-missing-esm-embeddings",
+                "--no-prepare-missing-esm-embeddings",
+                "--prepare-missing-ring-edges",
                 "--unsupported-metal-policy",
                 "skip",
                 "--selection-metric",
@@ -93,7 +97,9 @@ class TrainConfigParsingTests(unittest.TestCase):
         self.assertEqual(config.batch_size, 16)
         self.assertEqual(config.split_by, "structure_id")
         self.assertFalse(config.require_esm_embeddings)
+        self.assertFalse(config.prepare_missing_esm_embeddings)
         self.assertTrue(config.require_external_features)
+        self.assertTrue(config.prepare_missing_ring_edges)
         self.assertEqual(config.unsupported_metal_policy, "skip")
         self.assertEqual(config.selection_metric, "val_loss")
 

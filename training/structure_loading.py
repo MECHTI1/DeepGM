@@ -20,7 +20,14 @@ def pocket_has_full_supervision(pocket: PocketRecord) -> bool:
     return pocket.y_metal is not None and pocket.y_ec is not None
 
 
-def is_auxiliary_structure_file(path: Path) -> bool:
+def is_auxiliary_structure_file(path: Path, structure_root: Path) -> bool:
+    try:
+        relative_parts = path.relative_to(structure_root).parts
+    except ValueError:
+        relative_parts = path.parts
+
+    if len(relative_parts) > 2:
+        return True
     return path.parent.name == path.stem
 
 
@@ -29,7 +36,7 @@ def find_structure_files(structure_dir: Path) -> list[Path]:
     for pattern in ("*.pdb", "*.cif", "*.mmcif"):
         structure_files.extend(structure_dir.rglob(pattern))
     return sorted(
-        path for path in structure_files if path.is_file() and not is_auxiliary_structure_file(path)
+        path for path in structure_files if path.is_file() and not is_auxiliary_structure_file(path, structure_dir)
     )
 
 

@@ -9,18 +9,18 @@ import torch
 
 from data_structures import EDGE_SOURCE_TO_INDEX, PocketRecord, RING_INTERACTION_TO_INDEX, ResidueRecord
 from graph.construction import pocket_to_pyg_data, save_pocket_metadata_json
-from graph.edge_building import (
+from graph.edge_geometry import (
     build_pair_edge_geometry,
-    build_radius_edge_records_from_residues,
     build_radius_graph_from_residues,
-    build_ring_interaction_edge_records,
     candidate_residue_pairs_within_radius,
-    compute_shell_roles,
-    expand_edge_records_bidirectionally,
-    merge_edge_records,
-    radius_edge_records_from_index,
-    stack_edge_features,
 )
+from graph.edge_postprocess import expand_edge_records_bidirectionally, merge_edge_records, stack_edge_features
+from graph.edge_sources import (
+    build_radius_edge_records_from_residues,
+    build_ring_interaction_edge_records,
+    radius_edge_records_from_index,
+)
+from graph.shell_roles import compute_shell_roles
 from graph.feature_utils import attach_esm_embeddings, attach_external_residue_features
 from graph.structure_parsing import MetalAtomRecord, cluster_metal_records
 from training.graph_dataset import apply_feature_normalization, compute_feature_normalization_stats

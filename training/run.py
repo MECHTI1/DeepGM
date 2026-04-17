@@ -28,6 +28,7 @@ from training.loop import (
     train_epoch,
 )
 from training.preflight import run_preflight_checks
+from training.runtime_preparation import prepare_runtime_inputs
 from training.splits import PocketSplit, build_dataset_summary, split_pockets
 
 
@@ -196,6 +197,14 @@ def metric_sort_value(record: dict[str, Any], selection_metric: str) -> tuple[fl
 def prepare_run(config: TrainConfig) -> PreparedRun:
     validate_training_configuration(config)
     config_payload = config_to_payload(config)
+    runtime_preparation_report = prepare_runtime_inputs(
+        structure_dir=config.structure_dir,
+        esm_embeddings_dir=config.esm_embeddings_dir,
+        require_esm_embeddings=config.require_esm_embeddings,
+        prepare_missing_esm_embeddings=config.prepare_missing_esm_embeddings,
+        require_ring_edges=config.require_ring_edges,
+        prepare_missing_ring_edges=config.prepare_missing_ring_edges,
+    )
     load_result = load_training_pockets_with_report_from_dir(
         structure_dir=config.structure_dir,
         require_full_labels=True,
@@ -222,6 +231,7 @@ def prepare_run(config: TrainConfig) -> PreparedRun:
         config,
         feature_load_report=load_result.feature_report,
     )
+    dataset_summary["runtime_preparation"] = runtime_preparation_report
     train_graphs = build_graph_data_list(
         split.train_pockets,
         esm_dim=config.esm_dim,

@@ -16,13 +16,9 @@ from featurization import (
     compute_net_ligand_vector,
     residue_to_stage1_node_features,
 )
-from graph.edge_building import (
-    build_radius_edge_records_from_residues,
-    build_ring_interaction_edge_records,
-    compute_shell_roles,
-    merge_edge_records,
-    stack_edge_features,
-)
+from graph.edge_postprocess import merge_edge_records, stack_edge_features
+from graph.edge_sources import build_radius_edge_records_from_residues, build_ring_interaction_edge_records
+from graph.shell_roles import compute_shell_roles
 from graph.ring_edges import canonical_ring_edges_output_path
 from graph.structure_parsing import extract_metal_pockets_from_structure, parse_structure_file
 
