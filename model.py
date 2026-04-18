@@ -244,7 +244,7 @@ class GVPPocketClassifier(nn.Module):
         self.esm_graph_encoder = ESMGraphEncoder(esm_dim=esm_dim, proj_dim=esm_fusion_dim, dropout=0.1)
         self.edge_scalar_encoder = EdgeScalarEncoder(n_rbf=16, out_dim=edge_hidden)
         self.gvp_attn_pool = AttentionPool(hidden_s)
-        self.init_vec_proj = nn.Linear(2, hidden_v, bias=False)
+        self.init_vec_proj = nn.Linear(3, hidden_v, bias=False)
 
         self.layers = nn.ModuleList(
             [SimpleGVPLayer(s_dim=hidden_s, v_dim=hidden_v, e_dim=edge_hidden) for _ in range(n_layers)]
@@ -298,7 +298,7 @@ class GVPPocketClassifier(nn.Module):
         )
 
     def _init_vector_channels(self, x_vec: Tensor) -> Tensor:
-        # x_vec arrives as two explicit geometric channels per residue; project them
+        # x_vec arrives as three explicit geometric channels per residue; project them
         # into the hidden vector width used by the GVP layers.
         x_t = x_vec.transpose(1, 2)
         x_proj = self.init_vec_proj(x_t)

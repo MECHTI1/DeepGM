@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 from torch import Tensor
 
 from data_structures import ResidueRecord
 from featurization import safe_norm
+
+
+@dataclass
+class ResiduePairGeometry:
+    src_idx: int
+    dst_idx: int
+    src_coord: Tensor
+    dst_coord: Tensor
+    dist_raw: Tensor
+    seqsep: float
+    same_chain: float
+    vector_raw: Tensor
 
 
 def residue_atom_coords(residue: ResidueRecord) -> Tensor:
@@ -134,22 +148,51 @@ def canonicalize_edge_pair(
 
 
 def build_radius_graph_from_residues(residues: list[ResidueRecord], radius: float) -> Tensor:
+    edges = [(record.src_idx, record.dst_idx) for record in build_radius_pair_geometries(residues, radius)]
+
+    if not edges:
+        return torch.zeros(2, 0, dtype=torch.long)
+    return torch.tensor(edges, dtype=torch.long).t().contiguous()
+
+
+def build_radius_pair_geometries(
+    residues: list[ResidueRecord],
+    radius: float,
+) -> list[ResiduePairGeometry]:
     atom_coords_by_residue = residue_atom_coords_list(residues)
-    edges: list[tuple[int, int]] = []
+    geometry_records: list[ResiduePairGeometry] = []
     for src_idx, dst_idx in candidate_residue_pairs_within_radius(
         residues,
         radius,
         atom_coords_by_residue=atom_coords_by_residue,
     ):
-        _src_coord, _dst_coord, contact_distance = closest_points_between_residues(
+        src_coord, dst_coord, contact_distance = closest_points_between_residues(
             residues[src_idx],
             residues[dst_idx],
             src_coords=atom_coords_by_residue[src_idx],
             dst_coords=atom_coords_by_residue[dst_idx],
         )
-        if contact_distance <= radius:
-            edges.append((src_idx, dst_idx))
+        if contact_distance > radius:
+            continue
 
-    if not edges:
-        return torch.zeros(2, 0, dtype=torch.long)
-    return torch.tensor(edges, dtype=torch.long).t().contiguous()
+        src_idx, dst_idx, src_coord, dst_coord = canonicalize_edge_pair(src_idx, dst_idx, src_coord, dst_coord)
+        dist_raw, seqsep, same_chain, vector_raw = build_pair_edge_geometry(
+            residues[src_idx],
+            residues[dst_idx],
+            src_coord=src_coord,
+            dst_coord=dst_coord,
+        )
+        geometry_records.append(
+            ResiduePairGeometry(
+                src_idx=src_idx,
+                dst_idx=dst_idx,
+                src_coord=src_coord,
+                dst_coord=dst_coord,
+                dist_raw=dist_raw,
+                seqsep=seqsep,
+                same_chain=same_chain,
+                vector_raw=vector_raw,
+            )
+        )
+
+    return geometry_records

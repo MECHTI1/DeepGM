@@ -16,8 +16,8 @@ from featurization import (
     compute_net_ligand_vector,
     residue_to_stage1_node_features,
 )
-from graph.edge_postprocess import merge_edge_records, stack_edge_features
-from graph.edge_sources import build_radius_edge_records_from_residues, build_ring_interaction_edge_records
+from graph.edge_postprocess import merge_edge_records, stack_edge_features, stack_metal_edge_features
+from graph.edge_sources import build_radius_edge_records_from_residues, build_ring_edge_records
 from graph.shell_roles import compute_shell_roles
 from graph.ring_edges import canonical_ring_edges_output_path
 from graph.structure_parsing import extract_metal_pockets_from_structure, parse_structure_file
@@ -64,19 +64,25 @@ def pocket_to_pyg_data(
         ]
     )
 
-    edge_records = build_radius_edge_records_from_residues(pocket, edge_radius)
-    edge_records.extend(build_ring_interaction_edge_records(pocket, require_ring_edges=require_ring_edges))
-    edge_records = merge_edge_records(edge_records)
-    if not edge_records:
+    residue_edge_records = build_radius_edge_records_from_residues(pocket, edge_radius)
+    ring_residue_edge_records, metal_edge_records = build_ring_edge_records(
+        pocket,
+        require_ring_edges=require_ring_edges,
+    )
+    residue_edge_records.extend(ring_residue_edge_records)
+    residue_edge_records = merge_edge_records(residue_edge_records)
+    if not residue_edge_records:
         raise ValueError(
             f"Pocket {pocket.pocket_id} produced a graph with no edges at edge_radius={edge_radius}. "
             "Increase the radius, inspect the pocket residues, or provide ring interaction edges."
         )
-    edge_features = stack_edge_features(edge_records)
+    edge_features = stack_edge_features(residue_edge_records)
+    metal_edge_features = stack_metal_edge_features(metal_edge_records)
 
     data = Data(
         **node_features,
         **edge_features,
+        **metal_edge_features,
         metal_pos=MultinuclearSiteHandler.metal_coords_for_pocket(pocket),
         metal_center_pos=pocket.metal_coord.unsqueeze(0),
         metal_count=torch.tensor([pocket.metal_count()], dtype=torch.long),

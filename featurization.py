@@ -263,6 +263,11 @@ def residue_to_stage1_node_features(
 
     metal_coords = MultinuclearSiteHandler.metal_coords_for_pocket(pocket)
     ca = rr.ca()
+    cb = rr.get_atom("CB")
+    if cb is None:
+        # Keep feature construction defined for GLY or incomplete residues by
+        # collapsing the scaffold vector to zero and anchoring chemistry at CA.
+        cb = ca
     fg = functional_group_centroid(rr)
     donor_coords, donor_mask = donor_coords_and_mask(rr, max_donors=2)
 
@@ -292,8 +297,8 @@ def residue_to_stage1_node_features(
 
     x_misc = torch.tensor([v_net_norm, v_res_norm, cos_theta], dtype=torch.float32)
     env_groups = build_external_feature_groups(rr)
-    # Two node vector channels: local residue geometry and residue-to-metal direction.
-    x_vec = torch.stack([(fg - ca).float(), v_res], dim=0)
+    # Three node vector channels: local scaffold, local chemistry, and residue-to-metal direction.
+    x_vec = torch.stack([(cb - ca).float(), (fg - cb).float(), v_res], dim=0)
 
     return {
         "x_esm": esm_embedding.float(),

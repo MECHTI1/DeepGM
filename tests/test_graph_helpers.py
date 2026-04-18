@@ -12,13 +12,14 @@ from graph.construction import pocket_to_pyg_data, save_pocket_metadata_json
 from graph.edge_geometry import (
     build_pair_edge_geometry,
     build_radius_graph_from_residues,
+    build_radius_pair_geometries,
     candidate_residue_pairs_within_radius,
 )
+from graph.edge_records import ResidueEdgeRecord
 from graph.edge_postprocess import expand_edge_records_bidirectionally, merge_edge_records, stack_edge_features
 from graph.edge_sources import (
     build_radius_edge_records_from_residues,
-    build_ring_interaction_edge_records,
-    radius_edge_records_from_index,
+    build_ring_edge_records,
 )
 from graph.shell_roles import compute_shell_roles
 from graph.feature_utils import attach_esm_embeddings, attach_external_residue_features
@@ -95,8 +96,120 @@ class GraphFeatureUtilsTests(unittest.TestCase):
         self.assertTrue(pocket.residues[0].has_external_features)
         self.assertEqual(pocket.residues[0].external_features["SASA"], 12.5)
 
+    def test_pocket_to_pyg_data_uses_ca_to_cb_and_cb_to_fg_vector_channels(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=10,
+                ca=(1.0, 0.0, 0.0),
+                cb=(2.0, 0.0, 0.0),
+                extra_atoms={"ND1": (2.0, 1.0, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=11,
+                ca=(1.0, 0.0, 2.0),
+                cb=(2.0, 0.0, 2.0),
+                extra_atoms={"ND1": (2.0, 1.0, 2.0)},
+            ),
+        ]
+        pocket = make_pocket(residues)
+
+        data = pocket_to_pyg_data(pocket, esm_dim=4, edge_radius=3.0)
+
+        self.assertEqual(tuple(data.x_vec.shape), (2, 3, 3))
+        self.assertTrue(torch.allclose(data.x_vec[0, 0], torch.tensor([1.0, 0.0, 0.0])))
+        self.assertTrue(torch.allclose(data.x_vec[0, 1], torch.tensor([0.0, 1.0, 0.0])))
+        self.assertTrue(torch.allclose(data.x_vec[0, 2], torch.tensor([1.0, 0.0, 0.0])))
+
+    def test_pocket_to_pyg_data_falls_back_to_ca_when_cb_is_missing(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=11,
+                ca=(1.0, 0.0, 0.0),
+                extra_atoms={"ND1": (1.0, 1.0, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=12,
+                ca=(1.0, 0.0, 2.0),
+                cb=(2.0, 0.0, 2.0),
+                extra_atoms={"ND1": (2.0, 1.0, 2.0)},
+            ),
+        ]
+        pocket = make_pocket(residues)
+
+        data = pocket_to_pyg_data(pocket, esm_dim=4, edge_radius=3.0)
+
+        self.assertEqual(tuple(data.x_vec.shape), (2, 3, 3))
+        self.assertTrue(torch.allclose(data.x_vec[0, 0], torch.zeros(3)))
+        self.assertTrue(torch.allclose(data.x_vec[0, 1], torch.tensor([0.0, 1.0, 0.0])))
+
 
 class GraphEdgeBuildingTests(unittest.TestCase):
+    def test_compute_shell_roles_uses_ring_interactions_for_second_shell_when_available(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=1,
+                ca=(1.2, 0.0, 0.0),
+                cb=(1.7, 0.0, 0.0),
+                extra_atoms={"ND1": (1.1, 0.0, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=2,
+                ca=(4.0, 0.0, 0.0),
+                cb=(4.5, 0.0, 0.0),
+                extra_atoms={"ND1": (4.2, 0.0, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=3,
+                ca=(3.6, 0.8, 0.0),
+                cb=(4.1, 0.8, 0.0),
+                extra_atoms={"ND1": (3.8, 0.8, 0.0)},
+            ),
+        ]
+        pocket = make_pocket(residues)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ring_path = Path(tmpdir) / "sample_ringEdges"
+            ring_path.write_text(
+                "\t".join(["NodeId1", "NodeId2", "Interaction", "Atom1", "Atom2"]) + "\n"
+                + "\t".join(["A:1:_:HIS", "A:2:_:HIS", "HBOND:SC_SC", "ND1", "ND1"]) + "\n",
+                encoding="utf-8",
+            )
+            pocket.metadata["ring_edges_path"] = str(ring_path)
+
+            shell_roles = compute_shell_roles(pocket)
+
+        self.assertEqual(shell_roles, [(True, False), (False, True), (False, False)])
+
+    def test_compute_shell_roles_falls_back_to_centroid_proximity_without_ring_edges(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=1,
+                ca=(1.2, 0.0, 0.0),
+                cb=(1.7, 0.0, 0.0),
+                extra_atoms={"ND1": (1.1, 0.0, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=2,
+                ca=(4.0, 0.0, 0.0),
+                cb=(4.5, 0.0, 0.0),
+                extra_atoms={"ND1": (4.2, 0.0, 0.0)},
+            ),
+        ]
+        pocket = make_pocket(residues)
+
+        shell_roles = compute_shell_roles(pocket)
+
+        self.assertEqual(shell_roles, [(True, False), (False, True)])
+
     def test_build_pair_edge_geometry_uses_contact_and_ca_distances(self) -> None:
         src = make_residue(chain_id="A", resseq=5, ca=(0.0, 0.0, 0.0), cb=(1.0, 0.0, 0.0))
         dst = make_residue(chain_id="A", resseq=8, ca=(0.0, 3.0, 0.0), cb=(1.0, 1.0, 0.0))
@@ -150,34 +263,34 @@ class GraphEdgeBuildingTests(unittest.TestCase):
         ]
         pocket = make_pocket(residues)
 
-        edge_index = build_radius_graph_from_residues(residues, radius=2.5)
-        expected = radius_edge_records_from_index(pocket, edge_index)
+        expected = build_radius_pair_geometries(residues, radius=2.5)
         actual = build_radius_edge_records_from_residues(pocket, radius=2.5)
 
         self.assertEqual(
-            [(record["src"], record["dst"]) for record in actual],
-            [(record["src"], record["dst"]) for record in expected],
+            [(record.src, record.dst) for record in actual],
+            [(record.src_idx, record.dst_idx) for record in expected],
         )
         self.assertTrue(
-            all(torch.allclose(left["dist_raw"], right["dist_raw"]) for left, right in zip(actual, expected))
+            all(torch.allclose(left.dist_raw, right.dist_raw) for left, right in zip(actual, expected))
         )
         self.assertTrue(
-            all(torch.allclose(left["vector_raw"], right["vector_raw"]) for left, right in zip(actual, expected))
+            all(torch.allclose(left.vector_raw, right.vector_raw) for left, right in zip(actual, expected))
         )
 
     def test_stack_edge_features_builds_tensor_batch(self) -> None:
         edge_features = stack_edge_features(
             [
-                {
-                    "src": 0,
-                    "dst": 1,
-                    "dist_raw": torch.tensor([1.0, 2.0]),
-                    "seqsep": 4.0,
-                    "same_chain": 1.0,
-                    "vector_raw": torch.tensor([0.0, 1.0, 0.0]),
-                    "interaction_type": torch.tensor([1.0, 0.0]),
-                    "source_type": torch.tensor([0.0, 1.0]),
-                }
+                ResidueEdgeRecord(
+                    src=0,
+                    dst=1,
+                    dist_raw=torch.tensor([1.0, 2.0]),
+                    seqsep=4.0,
+                    same_chain=1.0,
+                    vector_raw=torch.tensor([0.0, 1.0, 0.0]),
+                    interaction_type=torch.tensor([1.0, 0.0]),
+                    source_type=torch.tensor([0.0, 1.0]),
+                    geometry_label="ring_atoms",
+                )
             ],
             bidirectional=False,
         )
@@ -190,85 +303,90 @@ class GraphEdgeBuildingTests(unittest.TestCase):
     def test_expand_edge_records_bidirectionally_adds_reverse_messages(self) -> None:
         expanded = expand_edge_records_bidirectionally(
             [
-                {
-                    "src": 0,
-                    "dst": 1,
-                    "dist_raw": torch.tensor([1.0, 2.0]),
-                    "seqsep": 4.0,
-                    "same_chain": 1.0,
-                    "vector_raw": torch.tensor([0.0, 1.0, 0.0]),
-                    "interaction_type": torch.tensor([1.0, 0.0]),
-                    "source_type": torch.tensor([0.0, 1.0]),
-                }
+                ResidueEdgeRecord(
+                    src=0,
+                    dst=1,
+                    dist_raw=torch.tensor([1.0, 2.0]),
+                    seqsep=4.0,
+                    same_chain=1.0,
+                    vector_raw=torch.tensor([0.0, 1.0, 0.0]),
+                    interaction_type=torch.tensor([1.0, 0.0]),
+                    source_type=torch.tensor([0.0, 1.0]),
+                    geometry_label="ring_atoms",
+                )
             ]
         )
 
-        self.assertEqual([(record["src"], record["dst"]) for record in expanded], [(0, 1), (1, 0)])
-        self.assertTrue(torch.allclose(expanded[0]["vector_raw"], torch.tensor([0.0, 1.0, 0.0])))
-        self.assertTrue(torch.allclose(expanded[1]["vector_raw"], torch.tensor([0.0, -1.0, 0.0])))
+        self.assertEqual([(record.src, record.dst) for record in expanded], [(0, 1), (1, 0)])
+        self.assertTrue(torch.allclose(expanded[0].vector_raw, torch.tensor([0.0, 1.0, 0.0])))
+        self.assertTrue(torch.allclose(expanded[1].vector_raw, torch.tensor([0.0, -1.0, 0.0])))
 
     def test_merge_edge_records_combines_sources_per_pair(self) -> None:
         merged = merge_edge_records(
             [
-                {
-                    "src": 0,
-                    "dst": 1,
-                    "dist_raw": torch.tensor([1.0, 2.0]),
-                    "seqsep": 4.0,
-                    "same_chain": 1.0,
-                    "vector_raw": torch.tensor([0.0, 1.0, 0.0]),
-                    "interaction_type": torch.tensor([0.0, 0.0, 0.0]),
-                    "source_type": torch.tensor([1.0, 0.0]),
-                },
-                {
-                    "src": 0,
-                    "dst": 1,
-                    "dist_raw": torch.tensor([1.2, 2.0]),
-                    "seqsep": 4.0,
-                    "same_chain": 1.0,
-                    "vector_raw": torch.tensor([0.0, 0.8, 0.0]),
-                    "interaction_type": torch.tensor([0.0, 1.0, 0.0]),
-                    "source_type": torch.tensor([0.0, 1.0]),
-                },
+                ResidueEdgeRecord(
+                    src=0,
+                    dst=1,
+                    dist_raw=torch.tensor([1.0, 2.0]),
+                    seqsep=4.0,
+                    same_chain=1.0,
+                    vector_raw=torch.tensor([0.0, 1.0, 0.0]),
+                    interaction_type=torch.tensor([0.0, 0.0, 0.0]),
+                    source_type=torch.tensor([1.0, 0.0]),
+                    geometry_label="closest_atoms",
+                ),
+                ResidueEdgeRecord(
+                    src=0,
+                    dst=1,
+                    dist_raw=torch.tensor([1.2, 2.0]),
+                    seqsep=4.0,
+                    same_chain=1.0,
+                    vector_raw=torch.tensor([0.0, 0.8, 0.0]),
+                    interaction_type=torch.tensor([0.0, 1.0, 0.0]),
+                    source_type=torch.tensor([0.0, 1.0]),
+                    geometry_label="ring_atoms",
+                ),
             ]
         )
 
-        self.assertEqual([(record["src"], record["dst"]) for record in merged], [(0, 1)])
-        self.assertTrue(torch.allclose(merged[0]["source_type"], torch.tensor([1.0, 1.0])))
-        self.assertTrue(torch.allclose(merged[0]["interaction_type"], torch.tensor([0.0, 1.0, 0.0])))
-        self.assertTrue(torch.allclose(merged[0]["dist_raw"], torch.tensor([1.0, 2.0])))
+        self.assertEqual([(record.src, record.dst) for record in merged], [(0, 1)])
+        self.assertTrue(torch.allclose(merged[0].source_type, torch.tensor([1.0, 1.0])))
+        self.assertTrue(torch.allclose(merged[0].interaction_type, torch.tensor([0.0, 1.0, 0.0])))
+        self.assertTrue(torch.allclose(merged[0].dist_raw, torch.tensor([1.0, 2.0])))
 
     def test_merge_edge_records_prefers_radius_geometry_independent_of_input_order(self) -> None:
         merged = merge_edge_records(
             [
-                {
-                    "src": 0,
-                    "dst": 1,
-                    "dist_raw": torch.tensor([0.5, 2.0]),
-                    "seqsep": 1.0,
-                    "same_chain": 1.0,
-                    "vector_raw": torch.tensor([0.0, 0.5, 0.0]),
-                    "interaction_type": torch.tensor([0.0, 1.0]),
-                    "source_type": torch.tensor([0.0, 1.0]),
-                },
-                {
-                    "src": 0,
-                    "dst": 1,
-                    "dist_raw": torch.tensor([1.5, 2.0]),
-                    "seqsep": 1.0,
-                    "same_chain": 1.0,
-                    "vector_raw": torch.tensor([0.0, 1.5, 0.0]),
-                    "interaction_type": torch.tensor([0.0, 0.0]),
-                    "source_type": torch.tensor([1.0, 0.0]),
-                },
+                ResidueEdgeRecord(
+                    src=0,
+                    dst=1,
+                    dist_raw=torch.tensor([0.5, 2.0]),
+                    seqsep=1.0,
+                    same_chain=1.0,
+                    vector_raw=torch.tensor([0.0, 0.5, 0.0]),
+                    interaction_type=torch.tensor([0.0, 1.0]),
+                    source_type=torch.tensor([0.0, 1.0]),
+                    geometry_label="ring_atoms",
+                ),
+                ResidueEdgeRecord(
+                    src=0,
+                    dst=1,
+                    dist_raw=torch.tensor([1.5, 2.0]),
+                    seqsep=1.0,
+                    same_chain=1.0,
+                    vector_raw=torch.tensor([0.0, 1.5, 0.0]),
+                    interaction_type=torch.tensor([0.0, 0.0]),
+                    source_type=torch.tensor([1.0, 0.0]),
+                    geometry_label="closest_atoms",
+                ),
             ]
         )
 
-        self.assertTrue(torch.allclose(merged[0]["source_type"], torch.tensor([1.0, 1.0])))
-        self.assertTrue(torch.allclose(merged[0]["dist_raw"], torch.tensor([1.5, 2.0])))
-        self.assertTrue(torch.allclose(merged[0]["vector_raw"], torch.tensor([0.0, 1.5, 0.0])))
+        self.assertTrue(torch.allclose(merged[0].source_type, torch.tensor([1.0, 1.0])))
+        self.assertTrue(torch.allclose(merged[0].dist_raw, torch.tensor([1.5, 2.0])))
+        self.assertTrue(torch.allclose(merged[0].vector_raw, torch.tensor([0.0, 1.5, 0.0])))
 
-    def test_build_ring_interaction_edge_records_canonicalizes_residue_edges_and_keeps_metal_contacts(self) -> None:
+    def test_build_ring_edge_records_canonicalizes_residue_edges_and_separates_metal_contacts(self) -> None:
         residues = [
             make_residue(
                 chain_id="A",
@@ -298,13 +416,96 @@ class GraphEdgeBuildingTests(unittest.TestCase):
             )
             pocket.metadata["ring_edges_path"] = str(ring_path)
 
-            edge_records = build_ring_interaction_edge_records(pocket)
+            residue_edge_records, metal_edge_records = build_ring_edge_records(pocket)
 
-        edge_pairs = {(record["src"], record["dst"]) for record in edge_records}
-        interaction_indices = {int(torch.argmax(record["interaction_type"]).item()) for record in edge_records}
-        self.assertEqual(edge_pairs, {(0, 1), (0, 0)})
+        edge_pairs = {(record.src, record.dst) for record in residue_edge_records}
+        interaction_indices = {int(torch.argmax(record.interaction_type).item()) for record in residue_edge_records}
+        metal_pairs = {(record.residue_idx, record.metal_idx) for record in metal_edge_records}
+        self.assertEqual(edge_pairs, {(0, 1)})
+        self.assertEqual(metal_pairs, {(0, 0)})
         self.assertIn(RING_INTERACTION_TO_INDEX["HBOND:SC_SC"], interaction_indices)
-        self.assertIn(RING_INTERACTION_TO_INDEX["METAL_ION:SC_LIG"], interaction_indices)
+        self.assertEqual(
+            int(torch.argmax(metal_edge_records[0].interaction_type).item()),
+            RING_INTERACTION_TO_INDEX["METAL_ION:SC_LIG"],
+        )
+
+    def test_build_ring_edge_records_collapses_mixed_hbond_labels(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=1,
+                ca=(0.0, 0.0, 0.0),
+                cb=(0.8, 0.5, 0.0),
+                extra_atoms={"N": (0.0, 0.0, -0.5), "ND1": (0.4, 0.2, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=2,
+                ca=(0.0, 0.0, 2.0),
+                cb=(0.7, 0.4, 2.1),
+                extra_atoms={"O": (0.0, 0.0, 2.5), "ND1": (0.2, 0.1, 1.5)},
+            ),
+        ]
+        pocket = make_pocket(residues)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ring_path = Path(tmpdir) / "sample_ringEdges"
+            ring_path.write_text(
+                "\t".join(["NodeId1", "NodeId2", "Interaction", "Atom1", "Atom2"]) + "\n"
+                + "\t".join(["A:1:_:HIS", "A:2:_:HIS", "HBOND:MC_SC", "N", "ND1"]) + "\n"
+                + "\t".join(["A:2:_:HIS", "A:1:_:HIS", "HBOND:SC_MC", "ND1", "N"]) + "\n",
+                encoding="utf-8",
+            )
+            pocket.metadata["ring_edges_path"] = str(ring_path)
+
+            edge_records, metal_edge_records = build_ring_edge_records(pocket)
+
+        self.assertEqual(len(edge_records), 1)
+        self.assertEqual((edge_records[0].src, edge_records[0].dst), (0, 1))
+        self.assertEqual(len(metal_edge_records), 0)
+        self.assertEqual(
+            int(torch.argmax(edge_records[0].interaction_type).item()),
+            RING_INTERACTION_TO_INDEX["HBOND:MIXED_MC_SC"],
+        )
+
+    def test_build_ring_edge_records_collapses_mixed_vdw_labels(self) -> None:
+        residues = [
+            make_residue(
+                chain_id="A",
+                resseq=1,
+                ca=(0.0, 0.0, 0.0),
+                cb=(0.8, 0.5, 0.0),
+                extra_atoms={"N": (0.0, 0.0, -0.5), "ND1": (0.4, 0.2, 0.0)},
+            ),
+            make_residue(
+                chain_id="A",
+                resseq=2,
+                ca=(0.0, 0.0, 2.0),
+                cb=(0.7, 0.4, 2.1),
+                extra_atoms={"O": (0.0, 0.0, 2.5), "ND1": (0.2, 0.1, 1.5)},
+            ),
+        ]
+        pocket = make_pocket(residues)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ring_path = Path(tmpdir) / "sample_ringEdges"
+            ring_path.write_text(
+                "\t".join(["NodeId1", "NodeId2", "Interaction", "Atom1", "Atom2"]) + "\n"
+                + "\t".join(["A:1:_:HIS", "A:2:_:HIS", "VDW:MC_SC", "N", "ND1"]) + "\n"
+                + "\t".join(["A:2:_:HIS", "A:1:_:HIS", "VDW:SC_MC", "ND1", "N"]) + "\n",
+                encoding="utf-8",
+            )
+            pocket.metadata["ring_edges_path"] = str(ring_path)
+
+            edge_records, metal_edge_records = build_ring_edge_records(pocket)
+
+        self.assertEqual(len(edge_records), 1)
+        self.assertEqual((edge_records[0].src, edge_records[0].dst), (0, 1))
+        self.assertEqual(len(metal_edge_records), 0)
+        self.assertEqual(
+            int(torch.argmax(edge_records[0].interaction_type).item()),
+            RING_INTERACTION_TO_INDEX["VDW:MIXED_MC_SC"],
+        )
 
     def test_pocket_to_pyg_data_merges_edge_sources_per_pair(self) -> None:
         residues = [
@@ -346,9 +547,9 @@ class GraphEdgeBuildingTests(unittest.TestCase):
         ring_mask = data.edge_source_type[:, EDGE_SOURCE_TO_INDEX["ring"]] > 0.5
         radius_mask = data.edge_source_type[:, EDGE_SOURCE_TO_INDEX["radius"]] > 0.5
         self.assertGreater(int(ring_mask.sum().item()), 0)
-        self.assertIn([0, 0], data.edge_index.t().tolist())
         self.assertIn([0, 1], data.edge_index.t().tolist())
         self.assertIn([1, 0], data.edge_index.t().tolist())
+        self.assertEqual(data.metal_edge_index.t().tolist(), [[0, 0]])
         edge_rows = data.edge_index.t().tolist()
         forward_idx = edge_rows.index([0, 1])
         reverse_idx = edge_rows.index([1, 0])

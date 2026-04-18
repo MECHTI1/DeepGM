@@ -79,7 +79,8 @@ NODE_FEATURES_CURRENTLY_HANDLED = [
     "fa_dun",
     "fa_atr",
     "fa_rep",
-    "v_ca_to_fg",
+    "v_ca_to_cb",
+    "v_cb_to_fg",
     "v_res_to_metal",
     "cos_theta_between_vnetligand_to_vrestometal",
 ]
@@ -93,12 +94,10 @@ EDGE_FEATURES_RECOMMENDED_RING = [
 INTERACTION_SUMMARIES_OPTIONAL_WITH_RING = [
     "HBOND:MC_MC",
     "HBOND:SC_SC",
-    "HBOND:MC_SC",
-    "HBOND:SC_MC",
+    "HBOND:MIXED_MC_SC",
     "VDW:SC_SC",
     "VDW:MC_MC",
-    "VDW:MC_SC",
-    "VDW:SC_MC",
+    "VDW:MIXED_MC_SC",
     "IONIC:SC_SC",
     "PIPISTACK:SC_SC",
     "PICATION:SC_SC",
@@ -107,6 +106,12 @@ INTERACTION_SUMMARIES_OPTIONAL_WITH_RING = [
 RING_INTERACTION_TYPES = set(INTERACTION_SUMMARIES_OPTIONAL_WITH_RING)
 RING_INTERACTION_TO_INDEX = {
     interaction: i for i, interaction in enumerate(INTERACTION_SUMMARIES_OPTIONAL_WITH_RING)
+}
+RING_INTERACTION_ALIASES = {
+    "HBOND:MC_SC": "HBOND:MIXED_MC_SC",
+    "HBOND:SC_MC": "HBOND:MIXED_MC_SC",
+    "VDW:MC_SC": "VDW:MIXED_MC_SC",
+    "VDW:SC_MC": "VDW:MIXED_MC_SC",
 }
 
 EDGE_SOURCE_TYPES = ["radius", "ring"]

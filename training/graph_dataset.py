@@ -98,6 +98,7 @@ def summarize_graph_dataset(
                 "is_multinuclear": bool(pocket.is_multinuclear()),
                 "n_residues": int(data.pos.size(0)),
                 "n_edges": int(data.edge_index.size(1)),
+                "n_metal_edges": int(data.metal_edge_index.size(1)) if hasattr(data, "metal_edge_index") else 0,
                 "n_radius_edges": int(radius_mask.sum().item()),
                 "n_ring_edges": int(ring_mask.sum().item()),
                 "n_duplicate_pairs": len(edge_pairs) - len(set(edge_pairs)),

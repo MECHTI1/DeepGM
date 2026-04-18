@@ -1,6 +1,6 @@
 # DeepGM Plan
 
-Last updated: 2026-04-13
+Last updated: 2026-04-18
 
 This file is the short project plan for the current codebase state. It is not a
 historical dump. It should answer three questions quickly:
@@ -33,21 +33,23 @@ The active runtime path is organized around:
 - `training/run.py`
 - `training/data.py`
 - `training/structure_loading.py`
+- `training/feature_paths.py`
 - `training/feature_sources.py`
 - `training/esm_feature_loading.py`
+- `training/external_feature_loading.py`
 - `training/site_filter.py`
 - `training/labels.py`
 - `training/graph_dataset.py`
 - `training/loop.py`
 - `training/preflight.py`
 - `training/splits.py`
+- `training/runtime_preparation.py`
 - `graph/construction.py`
 - `graph/structure_parsing.py`
 - `graph/shell_roles.py`
 - `graph/edge_geometry.py`
 - `graph/edge_sources.py`
 - `graph/edge_postprocess.py`
-- `graph/edge_building.py`
 - `graph/feature_utils.py`
 - `graph/ring_edges.py`
 - `model.py`
@@ -79,33 +81,49 @@ bug fixing. The project no longer needs a broad rewrite.
   input `ResidueRecord` objects.
 - Radius-edge construction now avoids a blind all-pairs scan by using a
   broad-phase spatial filter before exact atom-level checks.
-- Logical residue-pair edges are now merged across sources before final tensor
-  expansion for message passing.
+- Radius-edge geometry now has one canonical build path before edge-record
+  assembly.
+- Residue-residue edge records and residue-metal contact records are now typed
+  explicitly instead of being passed around as loose dicts.
+- Logical residue-pair edges are merged across sources before final tensor
+  expansion for residue message passing.
+- Metal contacts are no longer encoded as residue self-loops inside
+  `edge_index`; they are stored separately as `metal_edge_*` tensors.
 - Edge internals are split into focused modules for geometry, edge sources,
   shell-role logic, and edge post-processing.
+- The current model still message-passes only on residue-residue edges. If
+  needed later, a clean next modeling option is to add explicit message passing
+  over the existing residue-metal edge tensors instead of reintroducing fake
+  self-loops.
 
 ### Training behavior
 
 - Preflight checks catch empty splits, leakage, empty-residue pockets, and graph
   construction failures early.
 - Checkpoint selection is explicit.
-- The default selection behavior is coherent:
-  - `train_loss` when there is no validation split
-  - validation metrics only when validation is enabled
+- The default selection behavior is coherent: `train_loss` when there is no
+  validation split, and `val_joint_balanced_acc` when validation is enabled.
 - Class-balanced cross-entropy is explicit for both supervised heads.
 
 ### Tests
 
 - The repo has a real `unittest` suite under `tests/`.
-- Current passing baseline with the project interpreter: 46 tests, 6 skipped.
+- Current passing baseline with the project interpreter: 56 tests, 0 skipped.
 - Coverage exists for label logic, site filtering, training data loading, graph
   helpers, runtime graph construction, normalization, training orchestration,
   and graph-to-model smoke behavior.
+- A real-data smoke run succeeds with the current default dataset layout under
+  `/media/Data`.
+
+Verified on 2026-04-18:
+
+- `/home/mechti/miniconda3/envs/deepgm-py312/bin/python -m unittest discover` passed
+- `/home/mechti/miniconda3/envs/deepgm-py312/bin/python -c "from training.smoke_test import run_smoke_test; run_smoke_test(max_cases=4)"` passed
 
 Standard test command:
 
 ```bash
-/home/mechti/miniconda3/envs/deepgm-py312/bin/python -m unittest discover -s tests
+/home/mechti/miniconda3/envs/deepgm-py312/bin/python -m unittest discover
 ```
 
 ## Current Priorities
@@ -117,12 +135,17 @@ These are the next tasks that matter most.
 The main remaining operational risk is not training-path code. It is whether the
 real runtime artifact inventory is complete enough for baseline runs.
 
-Need to confirm:
+Confirmed so far:
+
+- the default dataset root under `/media/Data` is present in the current
+  environment
+- the current smoke path can load real structures and complete one train step
+
+Still need to confirm:
 
 - required ESM artifacts exist for the intended dataset
 - required external feature directories exist for the intended dataset
-- strict catalytic loading succeeds on a meaningful sample, then on the real
-  training set
+- strict catalytic loading succeeds on the real training set
 
 Why this matters:
 
@@ -184,6 +207,18 @@ These are worthwhile, but not current blockers.
   mode
 - avoid growing the suite with tests that duplicate helper-level coverage
 
+### Feature escalation only if needed
+
+- only if EC progress stalls, consider adding explicit FG-free or more
+  FG-specific physicochemical features
+- current residue-level pKa, solvation, burial, interaction, and contact signals
+  should be trusted first before adding that complexity
+- if coordination-aware performance stalls, consider extending the model to use
+  the already-built `metal_edge_*` tensors for explicit residue-metal message
+  passing
+- do not reintroduce metal contacts as residue self-loops; keep residue-metal
+  connectivity explicit if that work is taken on
+
 ## What Not To Do Next
 
 - Do not start another broad refactor without a concrete runtime problem.
@@ -193,5 +228,5 @@ These are worthwhile, but not current blockers.
 
 ## Immediate Next Step
 
-Use strict loading on the intended real dataset, confirm the artifact inventory,
-then run one baseline training job and use that run to drive the next decision.
+Run one baseline training job with validation enabled, save the run artifacts,
+and use that evidence to validate the current default training policies.
