@@ -36,7 +36,7 @@ class LabelSchemeTests(unittest.TestCase):
         self.assertEqual(map_site_metal_symbols("NI"), 3)
 
     def test_unsupported_symbol_can_be_skipped_explicitly(self) -> None:
-        self.assertIsNone(map_site_metal_symbols("MO", unsupported_policy="skip"))
+        self.assertIsNone(map_site_metal_symbols("MO", unsupported_metal_policy="skip"))
 
     def test_current_summary_metals_stay_within_supported_runtime_set(self) -> None:
         if not SUMMARY_CSV.is_file():

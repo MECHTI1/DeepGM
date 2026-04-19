@@ -12,7 +12,7 @@ from project_paths import (
     TRANSITION_METALS_SUMMARY_CSV,
     WHETHER_CATALYTIC_SUMMARY_CSV,
 )
-from training.labels import normalize_ec_numbers
+from training.labels import normalize_ec_number_list
 
 
 JOB_ROOT = MAHOMES_TRAIN_SET_DIR
@@ -57,7 +57,7 @@ def parse_prediction_input_file(value: str) -> tuple[str, str, str]:
     return (
         match.group("pdbid").strip().lower(),
         match.group("chain").strip(),
-        normalize_ec_numbers(match.group("ec")),
+        normalize_ec_number_list(match.group("ec")),
     )
 
 

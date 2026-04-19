@@ -119,7 +119,7 @@ def load_structure_pockets(
         try:
             pocket.y_metal = infer_metal_target_class_from_pocket(
                 pocket,
-                unsupported_policy=unsupported_metal_policy,
+                unsupported_metal_policy=unsupported_metal_policy,
             )
         except ValueError:
             skipped_pockets.append(

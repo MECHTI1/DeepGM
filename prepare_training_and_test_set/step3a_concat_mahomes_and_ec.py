@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from project_paths import MAHOMES_SUMMARY_DIR, MAHOMES_TRAIN_SET_DIR
-from training.labels import normalize_ec_numbers
+from training.labels import normalize_ec_number_list
 
 JOB_ROOT = MAHOMES_TRAIN_SET_DIR
 SUMMARY_DIR = MAHOMES_SUMMARY_DIR
@@ -22,7 +22,7 @@ def parse_pdbid(structure_dir_name: str) -> str:
 
 
 def parse_ec_numbers(structure_dir_name: str) -> str:
-    return normalize_ec_numbers(";".join(STRUCTURE_EC_RE.findall(structure_dir_name)))
+    return normalize_ec_number_list(";".join(STRUCTURE_EC_RE.findall(structure_dir_name)))
 
 
 def parse_chain_id(structure_dir_name: str) -> str:

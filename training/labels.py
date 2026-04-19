@@ -12,7 +12,7 @@ EC_TOP_LEVEL_RE = re.compile(r"__EC_(\d+)")
 STRUCTURE_ID_RE = re.compile(r"^(?P<pdbid>[^_]+)__chain_(?P<chain>[^_]+)__EC_(?P<ec>.+)$")
 
 
-def normalize_ec_numbers(value: str) -> str:
+def normalize_ec_number_list(value: str) -> str:
     values = []
     seen = set()
     for ec in re.split(r"[;,]", value):
@@ -31,7 +31,7 @@ def parse_structure_identity(structure_id: str) -> Tuple[str, str, str]:
     return (
         match.group("pdbid").strip().lower(),
         match.group("chain").strip(),
-        normalize_ec_numbers(match.group("ec")),
+        normalize_ec_number_list(match.group("ec")),
     )
 
 
@@ -48,13 +48,13 @@ def parse_ec_top_level_from_structure_path(path: Path) -> Optional[int]:
 def infer_metal_target_class_from_pocket(
     pocket: PocketRecord,
     *,
-    unsupported_policy: str = "error",
+    unsupported_metal_policy: str = "error",
 ) -> Optional[int]:
     observed_symbols = pocket.metadata.get("metal_symbols_observed")
     if isinstance(observed_symbols, list) and observed_symbols:
         return map_site_metal_symbols(
             observed_symbols,
-            unsupported_policy=unsupported_policy,
+            unsupported_metal_policy=unsupported_metal_policy,
         )
 
     metal_element = pocket.metal_element.strip()
@@ -63,5 +63,5 @@ def infer_metal_target_class_from_pocket(
 
     return map_site_metal_symbols(
         metal_element,
-        unsupported_policy=unsupported_policy,
+        unsupported_metal_policy=unsupported_metal_policy,
     )

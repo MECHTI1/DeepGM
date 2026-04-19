@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from data_structures import PocketRecord
-from training.labels import normalize_ec_numbers, parse_structure_identity
+from training.labels import normalize_ec_number_list, parse_structure_identity
 
 SUMMARY_REQUIRED_COLUMNS = frozenset({"pdbid", "metal residue number", "EC number"})
 SiteKey = Tuple[str, str, str]
@@ -28,7 +28,7 @@ def load_allowed_site_keys(summary_csv: Path) -> set[SiteKey]:
         keys = set()
         for row in reader:
             pdbid = row["pdbid"].strip().lower()
-            ec_number = normalize_ec_numbers(row["EC number"])
+            ec_number = normalize_ec_number_list(row["EC number"])
             metal_residue_number = row["metal residue number"].strip()
             if pdbid and ec_number and metal_residue_number:
                 keys.add((pdbid, ec_number, metal_residue_number))

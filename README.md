@@ -8,8 +8,44 @@ If either command does not resolve to `/home/mechti/miniconda3/envs/deepgm-py312
 Install the core dependencies with `/home/mechti/miniconda3/envs/deepgm-py312/bin/python -m pip install -r requirements.txt`.
 Run the current test suite with `/home/mechti/miniconda3/envs/deepgm-py312/bin/python -m unittest discover`.
 The current training entry point is `/home/mechti/miniconda3/envs/deepgm-py312/bin/python train.py`.
+For Colab-friendly training defaults, use `python deepgm_colab.py` or `python -m deepgm_colab`.
+To build validated Colab dataset bundles from a local training tree, use `python build_colab_bundle.py`.
 Use `.Study_Plan.md` for a 2.5-day guided ramp-up through the active code path.
 The main runtime code lives in `training/`, `graph/`, `model.py`, and `train.py`.
 The `prepare_training_and_test_set/` scripts are for dataset preparation, not the main training loop.
 `requirements.txt` covers the core training and test stack used in the current repo.
 If you work on embedding generation, you may need extra packages used by `embed_helpers/` in addition to the core requirements.
+
+Colab example:
+
+```bash
+python deepgm_colab.py --mount-drive --epochs 3 --batch-size 4 --val-fraction 0.2
+```
+
+Colab bundle example:
+
+```bash
+/home/mechti/miniconda3/envs/deepgm-py312/bin/python build_colab_bundle.py \
+  --structure-dir /media/Data/pinmymetal_sets/mahomes/train_set \
+  --summary-csv /media/Data/pinmymetal_sets/mahomes/train_set/data_summarizing_tables/final_data_summarazing_table_transition_metals_only_catalytic.csv \
+  --esm-embeddings-dir /home/mechti/PycharmProjects/DeepGM/.data/embeddings \
+  --output-dir /media/Data/pinmymetal_sets/mahomes/colab_bundle \
+  --exclude-structure-id 1a16__chain_A__EC_3.4.11.9 \
+  --exclude-structure-id 1aso__chain_A__EC_1.10.3.3
+```
+
+This writes:
+
+- a manifest of included, unused, and invalid structures
+- a `train_set_clean.tar.zst` archive with the train-set layout preserved
+- an `embeddings_clean.tar.zst` archive with the matching ESM files
+
+Default Colab paths used when you do not pass explicit paths:
+
+- `structure_dir`: `/content/drive/MyDrive/DeepGM/train_set`
+- `esm_embeddings_dir`: `/content/drive/MyDrive/DeepGM/embeddings`
+- `runs_dir`: `/content/drive/MyDrive/DeepGM/training_runs`
+
+Override them with normal training args such as `--structure-dir` and `--runs-dir`,
+or by setting `DEEPGM_COLAB_STRUCTURE_DIR`, `DEEPGM_COLAB_EMBEDDINGS_DIR`,
+`DEEPGM_COLAB_RUNS_DIR`, and `DEEPGM_COLAB_EXTERNAL_FEATURES_DIR`.

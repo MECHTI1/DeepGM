@@ -146,11 +146,16 @@ Still need to confirm:
 - required ESM artifacts exist for the intended dataset
 - required external feature directories exist for the intended dataset
 - strict catalytic loading succeeds on the real training set
+- known strict-load blockers are audited and either fixed or deferred explicitly:
+  - `1a16__chain_A__EC_3.4.11.9`: ESM residue alignment mismatch
+  - `1aso__chain_A__EC_1.10.3.3`: incomplete external-feature folder
 
 Why this matters:
 
 - If the runtime inventory is incomplete, baseline training will fail for
   operational reasons rather than modeling reasons.
+- The current pragmatic move is to record and defer isolated bad structures so
+  they do not block baseline experimentation on the rest of the dataset.
 
 ### 2. Run and record one baseline training job
 

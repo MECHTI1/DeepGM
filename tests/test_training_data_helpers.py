@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 
 from data_structures import PocketRecord, ResidueRecord
+from training.labels import normalize_ec_number_list
 from training.site_filter import load_allowed_site_keys, pocket_matches_allowed_sites
 from training.structure_loading import find_structure_files
 
@@ -31,6 +32,12 @@ def make_pocket_with_sites(*site_ids: tuple[str, int, str]) -> PocketRecord:
 
 
 class TrainingSiteFilterTests(unittest.TestCase):
+    def test_normalize_ec_number_list_canonicalizes_separators_and_deduplicates(self) -> None:
+        self.assertEqual(
+            normalize_ec_number_list("1.2.3.4, 2.7.11.1;1.2.3.4"),
+            "1.2.3.4;2.7.11.1",
+        )
+
     def test_load_allowed_site_keys_normalizes_and_deduplicates_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             summary_csv = Path(tmpdir) / "summary.csv"

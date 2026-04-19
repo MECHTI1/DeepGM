@@ -37,7 +37,7 @@ METAL_SYMBOL_TO_TARGET = {
 def map_site_metal_symbols(
     symbols: str | tuple[str, ...] | list[str],
     *,
-    unsupported_policy: str = "error",
+    unsupported_metal_policy: str = "error",
 ) -> int | None:
     if isinstance(symbols, str):
         symbols = (symbols,)
@@ -48,7 +48,7 @@ def map_site_metal_symbols(
         try:
             target_ids.add(METAL_SYMBOL_TO_TARGET[normalized])
         except KeyError as exc:
-            if unsupported_policy == "skip":
+            if unsupported_metal_policy == "skip":
                 return None
             raise ValueError(
                 f"Unsupported site metal symbol {symbol!r}. "
