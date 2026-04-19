@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from deepgm_colab import (
     apply_colab_defaults,
     cli_option_present,
     parse_colab_args,
+    validate_colab_runtime_inputs,
 )
 from training.config import parse_args
 
@@ -33,6 +35,13 @@ class ColabDefaultingTests(unittest.TestCase):
         )
 
         self.assertEqual(updated.structure_dir, Path("/content/drive/MyDrive/DeepGM/train_set"))
+        self.assertEqual(
+            updated.summary_csv,
+            Path(
+                "/content/drive/MyDrive/DeepGM/"
+                "train_set/data_summarizing_tables/final_data_summarazing_table_transition_metals_only_catalytic.csv"
+            ),
+        )
         self.assertEqual(updated.esm_embeddings_dir, "/content/drive/MyDrive/DeepGM/embeddings")
         self.assertEqual(updated.runs_dir, "/content/drive/MyDrive/DeepGM/training_runs")
         self.assertEqual(updated.device, "cpu")
@@ -43,6 +52,8 @@ class ColabDefaultingTests(unittest.TestCase):
             [
                 "--structure-dir",
                 "/tmp/structures",
+                "--summary-csv",
+                "/tmp/summary.csv",
                 "--esm-embeddings-dir",
                 "/tmp/embeddings",
                 "--runs-dir",
@@ -57,6 +68,8 @@ class ColabDefaultingTests(unittest.TestCase):
             argv=[
                 "--structure-dir",
                 "/tmp/structures",
+                "--summary-csv",
+                "/tmp/summary.csv",
                 "--esm-embeddings-dir",
                 "/tmp/embeddings",
                 "--runs-dir",
@@ -68,6 +81,7 @@ class ColabDefaultingTests(unittest.TestCase):
         )
 
         self.assertEqual(updated.structure_dir, Path("/tmp/structures"))
+        self.assertEqual(updated.summary_csv, Path("/tmp/summary.csv"))
         self.assertEqual(updated.esm_embeddings_dir, "/tmp/embeddings")
         self.assertEqual(updated.runs_dir, "/tmp/runs")
         self.assertEqual(updated.device, "cpu")
@@ -91,6 +105,59 @@ class ColabParsingTests(unittest.TestCase):
         self.assertEqual(training_argv, ["--epochs", "3"])
         self.assertEqual(config.epochs, 3)
         self.assertEqual(config.structure_dir, Path("/tmp/drive/DeepGM/train_set"))
+        self.assertEqual(
+            config.summary_csv,
+            Path(
+                "/tmp/drive/DeepGM/"
+                "train_set/data_summarizing_tables/final_data_summarazing_table_transition_metals_only_catalytic.csv"
+            ),
+        )
+
+
+class ColabValidationTests(unittest.TestCase):
+    def test_validate_colab_runtime_inputs_accepts_existing_structure_and_summary_paths(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            structure_dir = root / "train_set"
+            summary_csv = structure_dir / "data_summarizing_tables" / "summary.csv"
+            structure_dir.mkdir(parents=True)
+            summary_csv.parent.mkdir(parents=True, exist_ok=True)
+            summary_csv.write_text("pdbid\n", encoding="utf-8")
+
+            config = parse_args(
+                [
+                    "--structure-dir",
+                    str(structure_dir),
+                    "--summary-csv",
+                    str(summary_csv),
+                    "--esm-embeddings-dir",
+                    str(root / "embeddings"),
+                    "--runs-dir",
+                    str(root / "runs"),
+                ]
+            )
+
+            validate_colab_runtime_inputs(config)
+
+            self.assertTrue((root / "embeddings").is_dir())
+            self.assertTrue((root / "runs").is_dir())
+
+    def test_validate_colab_runtime_inputs_rejects_missing_summary_csv(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            structure_dir = root / "train_set"
+            structure_dir.mkdir(parents=True)
+            config = parse_args(
+                [
+                    "--structure-dir",
+                    str(structure_dir),
+                    "--summary-csv",
+                    str(root / "missing.csv"),
+                ]
+            )
+
+            with self.assertRaises(FileNotFoundError):
+                validate_colab_runtime_inputs(config)
 
 
 if __name__ == "__main__":

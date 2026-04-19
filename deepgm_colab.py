@@ -14,12 +14,16 @@ from training.run import run_training
 
 COLAB_DRIVE_ROOT_ENV = "DEEPGM_COLAB_DRIVE_ROOT"
 COLAB_STRUCTURE_DIR_ENV = "DEEPGM_COLAB_STRUCTURE_DIR"
+COLAB_SUMMARY_CSV_ENV = "DEEPGM_COLAB_SUMMARY_CSV"
 COLAB_EMBEDDINGS_DIR_ENV = "DEEPGM_COLAB_EMBEDDINGS_DIR"
 COLAB_RUNS_DIR_ENV = "DEEPGM_COLAB_RUNS_DIR"
 COLAB_EXTERNAL_FEATURES_DIR_ENV = "DEEPGM_COLAB_EXTERNAL_FEATURES_DIR"
 DEFAULT_COLAB_DRIVE_ROOT = Path("/content/drive/MyDrive")
 DEFAULT_COLAB_PROJECT_DIRNAME = "DeepGM"
 DEFAULT_COLAB_MOUNT_ROOT = Path("/content/drive")
+DEFAULT_COLAB_SUMMARY_RELATIVE_PATH = Path(
+    "train_set/data_summarizing_tables/final_data_summarazing_table_transition_metals_only_catalytic.csv"
+)
 
 
 def build_wrapper_arg_parser() -> argparse.ArgumentParser:
@@ -77,6 +81,13 @@ def default_colab_structure_dir(drive_root: Path) -> Path:
     return drive_root / DEFAULT_COLAB_PROJECT_DIRNAME / "train_set"
 
 
+def default_colab_summary_csv(drive_root: Path) -> Path:
+    configured = os.getenv(COLAB_SUMMARY_CSV_ENV)
+    if configured:
+        return Path(configured).expanduser()
+    return drive_root / DEFAULT_COLAB_PROJECT_DIRNAME / DEFAULT_COLAB_SUMMARY_RELATIVE_PATH
+
+
 def default_colab_embeddings_dir(drive_root: Path) -> str:
     configured = os.getenv(COLAB_EMBEDDINGS_DIR_ENV)
     if configured:
@@ -108,6 +119,8 @@ def apply_colab_defaults(
 
     if not cli_option_present(argv, "--structure-dir"):
         updates["structure_dir"] = default_colab_structure_dir(drive_root)
+    if not cli_option_present(argv, "--summary-csv"):
+        updates["summary_csv"] = default_colab_summary_csv(drive_root)
     if not cli_option_present(argv, "--esm-embeddings-dir"):
         updates["esm_embeddings_dir"] = default_colab_embeddings_dir(drive_root)
     if not cli_option_present(argv, "--runs-dir"):
@@ -142,6 +155,12 @@ def validate_colab_runtime_inputs(config: TrainConfig) -> None:
             "Structure directory does not exist: "
             f"{config.structure_dir}. In Colab, mount Drive and pass --structure-dir "
             f"or set {COLAB_STRUCTURE_DIR_ENV}."
+        )
+    if not Path(config.summary_csv).exists():
+        raise FileNotFoundError(
+            "Summary CSV does not exist: "
+            f"{config.summary_csv}. In Colab, pass --summary-csv "
+            f"or set {COLAB_SUMMARY_CSV_ENV}."
         )
 
     if config.esm_embeddings_dir is not None:

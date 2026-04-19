@@ -43,9 +43,11 @@ This writes:
 Default Colab paths used when you do not pass explicit paths:
 
 - `structure_dir`: `/content/drive/MyDrive/DeepGM/train_set`
+- `summary_csv`: `/content/drive/MyDrive/DeepGM/train_set/data_summarizing_tables/final_data_summarazing_table_transition_metals_only_catalytic.csv`
 - `esm_embeddings_dir`: `/content/drive/MyDrive/DeepGM/embeddings`
 - `runs_dir`: `/content/drive/MyDrive/DeepGM/training_runs`
 
 Override them with normal training args such as `--structure-dir` and `--runs-dir`,
 or by setting `DEEPGM_COLAB_STRUCTURE_DIR`, `DEEPGM_COLAB_EMBEDDINGS_DIR`,
-`DEEPGM_COLAB_RUNS_DIR`, and `DEEPGM_COLAB_EXTERNAL_FEATURES_DIR`.
+`DEEPGM_COLAB_SUMMARY_CSV`, `DEEPGM_COLAB_RUNS_DIR`, and
+`DEEPGM_COLAB_EXTERNAL_FEATURES_DIR`.
