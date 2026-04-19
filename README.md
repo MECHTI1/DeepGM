@@ -9,6 +9,7 @@ Install the core dependencies with `/home/mechti/miniconda3/envs/deepgm-py312/bi
 Run the current test suite with `/home/mechti/miniconda3/envs/deepgm-py312/bin/python -m unittest discover`.
 The current training entry point is `/home/mechti/miniconda3/envs/deepgm-py312/bin/python train.py`.
 For Colab-friendly training defaults, use `python deepgm_colab.py` or `python -m deepgm_colab`.
+There is also a ready-made notebook at `DeepGM_colab.ipynb` for running the same flow in Google Colab.
 To build validated Colab dataset bundles from a local training tree, use `python build_colab_bundle.py`.
 Use `.Study_Plan.md` for a 2.5-day guided ramp-up through the active code path.
 The main runtime code lives in `training/`, `graph/`, `model.py`, and `train.py`.

@@ -3,6 +3,9 @@
 This file is the shortest path to running the current cleaned DeepGM bundle in
 Google Colab.
 
+If you prefer a notebook file instead of copy-pasting cells manually, use
+`DeepGM_colab.ipynb` in the repo root. It follows the same steps as this file.
+
 The code stays normal Python code. Colab is only another environment to run it
 in.
 
