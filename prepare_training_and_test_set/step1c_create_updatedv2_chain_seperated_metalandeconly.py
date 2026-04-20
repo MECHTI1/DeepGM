@@ -42,10 +42,23 @@ METAL_ELEMENTS = {
 }
 
 WATER_NAMES = {"HOH", "WAT", "H2O", "DOD", "SOL"}
+PROTEIN_RESIDUE_NAMES = {
+    "ALA", "ARG", "ASN", "ASP", "CYS",
+    "GLN", "GLU", "GLY", "HIS", "ILE",
+    "LEU", "LYS", "MET", "PHE", "PRO",
+    "SER", "THR", "TRP", "TYR", "VAL",
+    "ASX", "GLX", "SEC", "PYL", "MSE",
+}
 
 
 def is_water_residue(residue: gemmi.Residue) -> bool:
     return residue.name.strip().upper() in WATER_NAMES
+
+
+def is_polymer_residue(residue: gemmi.Residue) -> bool:
+    if residue.name.strip().upper() in PROTEIN_RESIDUE_NAMES:
+        return True
+    return residue.entity_type == gemmi.EntityType.Polymer
 
 
 def residue_has_transition_metal(residue: gemmi.Residue) -> bool:
@@ -54,6 +67,21 @@ def residue_has_transition_metal(residue: gemmi.Residue) -> bool:
         if elem in METAL_ELEMENTS:
             return True
     return False
+
+
+def is_supported_metal_ion_residue(residue: gemmi.Residue) -> bool:
+    atoms = list(residue)
+    if not atoms:
+        return False
+    return all(atom.element.name.upper() in METAL_ELEMENTS for atom in atoms)
+
+
+def should_keep_residue(residue: gemmi.Residue) -> bool:
+    if is_water_residue(residue):
+        return False
+    if is_polymer_residue(residue):
+        return True
+    return is_supported_metal_ion_residue(residue)
 
 
 def chain_contains_transition_metal(chain: gemmi.Chain) -> bool:
@@ -212,6 +240,31 @@ def parse_chain_to_ec(path: Path, input_kind: str) -> dict[str, str]:
         return {}
 
 
+def sanitize_filename_fragment(value: str) -> str:
+    sanitized = value.strip()
+    sanitized = re.sub(r"\s+", "", sanitized)
+    sanitized = sanitized.replace("/", "-")
+    sanitized = re.sub(r"_+", "_", sanitized)
+    sanitized = sanitized.strip("_")
+    return sanitized or "unknown"
+
+
+def build_structure_output_name(
+    *,
+    source_stem: str,
+    chain_name: str,
+    ec: str,
+    suffix: str,
+) -> str:
+    safe_source_stem = sanitize_filename_fragment(source_stem)
+    safe_chain_name = sanitize_filename_fragment(chain_name)
+    # Preserve EC punctuation that downstream parsing already handles, but
+    # remove whitespace and normalize separators inside the dynamic fragment so
+    # the final name keeps exactly the intentional double-underscore delimiters.
+    safe_ec = sanitize_filename_fragment(ec)
+    return f"{safe_source_stem}__chain_{safe_chain_name}__EC_{safe_ec}{suffix}"
+
+
 def make_single_chain_structure(
     original: gemmi.Structure,
     model_index: int,
@@ -241,7 +294,10 @@ def make_single_chain_structure(
     new_chain = gemmi.Chain(selected_chain.name)
 
     for residue in selected_chain:
-        if is_water_residue(residue):
+        # Keep the protein backbone and supported transition-metal ions, but
+        # drop fragile small hetero residues that frequently crash MAHOMES /
+        # Rosetta during atom completion.
+        if not should_keep_residue(residue):
             continue
 
         new_res = gemmi.Residue()
@@ -347,9 +403,13 @@ def process_one_file(
                 print(f"[ERROR] Failed extracting chain {chain_name} from {path.name}: {e}")
                 continue
 
-            safe_ec = ec.replace("/", "_")
             suffix = ".pdb" if output_format == "pdb" else ".cif"
-            out_name = f"{path.stem}__chain_{chain_name}__EC_{safe_ec}{suffix}"
+            out_name = build_structure_output_name(
+                source_stem=path.stem,
+                chain_name=chain_name,
+                ec=ec,
+                suffix=suffix,
+            )
             out_path = output_dir / out_name
 
             if out_path.exists() and not overwrite:
