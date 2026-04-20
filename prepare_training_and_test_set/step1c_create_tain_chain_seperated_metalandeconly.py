@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import re
 import sys
@@ -17,16 +18,27 @@ except ImportError:
 # =========================================================
 # INPUT / OUTPUT FOLDERS
 # =========================================================
+DATASET_ROOT = Path(
+    os.getenv("DEEPGM_PINMYMETAL_SET_ROOT", "/media/Data/pinmymetal_sets/train")
+).expanduser()
 INPUT_OUTPUT_JOBS = [
     {
-        "input_dir": Path("/media/Data/pinmymetal_sets/train/cif_updated"),
-        "output_dir": Path("/media/Data/pinmymetal_sets/train/cif_updatedv2"),
+        "input_dir": Path(
+            os.getenv("DEEPGM_STEP1C_INPUT_CIF_DIR", str(DATASET_ROOT / "cif_updated"))
+        ).expanduser(),
+        "output_dir": Path(
+            os.getenv("DEEPGM_STEP1C_OUTPUT_CIF_DIR", str(DATASET_ROOT / "cif_updatedv2"))
+        ).expanduser(),
         "input_kind": "cif",
         "output_format": "cif",
     },
     {
-        "input_dir": Path("/media/Data/pinmymetal_sets/train/pdb_updated"),
-        "output_dir": Path("/media/Data/pinmymetal_sets/train/pdb_updatedv2"),
+        "input_dir": Path(
+            os.getenv("DEEPGM_STEP1C_INPUT_PDB_DIR", str(DATASET_ROOT / "pdb_updated"))
+        ).expanduser(),
+        "output_dir": Path(
+            os.getenv("DEEPGM_STEP1C_OUTPUT_PDB_DIR", str(DATASET_ROOT / "pdb_updatedv2"))
+        ).expanduser(),
         "input_kind": "pdb",
         "output_format": "pdb",
     },

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Dict, List, Set, Tuple, Optional
 
@@ -11,9 +12,16 @@ from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 # =========================================================
 # PATHS
 # =========================================================
-INPUT_DIR = Path("/media/Data/pinmymetal_sets/train/cif")
-OUTPUT_CIF_DIR = Path("/media/Data/pinmymetal_sets/train/cif_updated")
-OUTPUT_PDB_DIR = Path("/media/Data/pinmymetal_sets/train/pdb_updated")
+DATASET_ROOT = Path(
+    os.getenv("DEEPGM_PINMYMETAL_SET_ROOT", "/media/Data/pinmymetal_sets/train")
+).expanduser()
+INPUT_DIR = Path(os.getenv("DEEPGM_STEP1B_INPUT_DIR", str(DATASET_ROOT / "cif"))).expanduser()
+OUTPUT_CIF_DIR = Path(
+    os.getenv("DEEPGM_STEP1B_OUTPUT_CIF_DIR", str(DATASET_ROOT / "cif_updated"))
+).expanduser()
+OUTPUT_PDB_DIR = Path(
+    os.getenv("DEEPGM_STEP1B_OUTPUT_PDB_DIR", str(DATASET_ROOT / "pdb_updated"))
+).expanduser()
 
 OVERWRITE = False
 VERBOSE = True
