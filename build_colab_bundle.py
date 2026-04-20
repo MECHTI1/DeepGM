@@ -229,6 +229,7 @@ def build_manifest_payload(
     structure_dir: Path,
     summary_csv: Path,
     embeddings_dir: Path,
+    feature_root_dir: Path | None,
     results: Sequence[StructureCheckResult],
     excluded_structure_ids: Sequence[str],
     structure_archive_name: str | None,
@@ -245,6 +246,7 @@ def build_manifest_payload(
         "structure_dir": str(structure_dir),
         "summary_csv": str(summary_csv),
         "esm_embeddings_dir": str(embeddings_dir),
+        "external_features_root_dir": str(feature_root_dir) if feature_root_dir is not None else None,
         "excluded_structure_ids": sorted(excluded_structure_ids),
         "n_total_structures": len(results) + len(excluded_structure_ids),
         "n_included_structures": len(included),
@@ -337,10 +339,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         structure_dir = Path(str(manifest_payload["structure_dir"])).expanduser().resolve()
         summary_csv = Path(str(manifest_payload["summary_csv"])).expanduser().resolve()
         resolved_embeddings_dir = Path(str(manifest_payload["esm_embeddings_dir"])).expanduser().resolve()
-        resolved_feature_root_dir = (
-            args.external_features_root_dir.expanduser().resolve()
-            if args.external_features_root_dir is not None
-            else structure_dir
+        manifest_feature_root_dir = (
+            Path(str(manifest_payload["external_features_root_dir"])).expanduser().resolve()
+            if manifest_payload.get("external_features_root_dir")
+            else None
+        )
+        _unused_embeddings_dir, resolved_feature_root_dir = resolve_runtime_feature_paths(
+            structure_dir=structure_dir,
+            esm_embeddings_dir=resolved_embeddings_dir,
+            external_features_root_dir=(
+                args.external_features_root_dir.expanduser().resolve()
+                if args.external_features_root_dir is not None
+                else manifest_feature_root_dir
+            ),
         )
         structure_members, embedding_members = collect_members_from_manifest(
             manifest_payload=manifest_payload,
@@ -412,6 +423,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             structure_dir=structure_dir,
             summary_csv=summary_csv,
             embeddings_dir=resolved_embeddings_dir,
+            feature_root_dir=resolved_feature_root_dir,
             results=results,
             excluded_structure_ids=sorted(excluded_structure_ids),
             structure_archive_name=structure_archive_name,

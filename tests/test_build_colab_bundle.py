@@ -81,6 +81,7 @@ class ManifestPayloadTests(unittest.TestCase):
             structure_dir=Path("/tmp/train_set"),
             summary_csv=Path("/tmp/train_set/data_summarizing_tables/summary.csv"),
             embeddings_dir=Path("/tmp/embeddings"),
+            feature_root_dir=Path("/tmp/updated_feature_extraction"),
             results=results,
             excluded_structure_ids=["skip_me"],
             structure_archive_name="train_set_clean.tar.zst",
@@ -91,6 +92,7 @@ class ManifestPayloadTests(unittest.TestCase):
         self.assertEqual(payload["n_included_structures"], 1)
         self.assertEqual(payload["n_unused_structures"], 1)
         self.assertEqual(payload["n_invalid_structures"], 1)
+        self.assertEqual(payload["external_features_root_dir"], "/tmp/updated_feature_extraction")
 
     def test_load_manifest_payload_round_trips_json(self) -> None:
         payload = {"hello": "world", "count": 3}

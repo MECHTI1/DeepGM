@@ -8,6 +8,7 @@ MEDIA_DATA_ROOT_ENV = "DEEPGM_MEDIA_DATA_ROOT"
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / ".data"
 EMBEDDINGS_DIR = DATA_DIR / "embeddings"
+UPDATED_FEATURE_EXTRACTION_DIR = DATA_DIR / "updated_feature_extraction"
 RUNS_DIR = DATA_DIR / "training_runs"
 MEDIA_DATA_ROOT = Path(os.getenv(MEDIA_DATA_ROOT_ENV, "/media/Data")).expanduser()
 PINMYMETAL_SETS_DIR = MEDIA_DATA_ROOT / "pinmymetal_sets"
@@ -24,6 +25,10 @@ CATALYTIC_ONLY_SUMMARY_CSV = MAHOMES_SUMMARY_DIR / "final_data_summarazing_table
 
 def get_default_embeddings_dir() -> Path:
     return EMBEDDINGS_DIR
+
+
+def get_default_updated_feature_extraction_dir() -> Path:
+    return UPDATED_FEATURE_EXTRACTION_DIR
 
 
 def get_default_runs_dir() -> Path:

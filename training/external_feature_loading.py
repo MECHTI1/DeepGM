@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -276,6 +277,25 @@ def structure_dir_to_feature_lookup(structure_dir: str | Path) -> Dict[ResidueKe
     structure_path = Path(structure_dir)
     structure_name = structure_path.name
     chain_id = infer_chain_id(structure_name)
+    updated_feature_json_path = structure_path / "residue_features.json"
+
+    if updated_feature_json_path.is_file():
+        payload = json.loads(updated_feature_json_path.read_text(encoding="utf-8"))
+        residue_features: Dict[ResidueKey, Dict[str, float]] = {}
+        for residue_payload in payload.get("residues", []):
+            key = (
+                str(residue_payload["chain_id"]),
+                int(residue_payload["resseq"]),
+                str(residue_payload.get("icode", "")).strip(),
+            )
+            entry = default_feature_dict()
+            for feature_name, value in residue_payload.get("features", {}).items():
+                entry[feature_name] = float(value)
+                if f"{feature_name}_missing" in entry:
+                    entry[f"{feature_name}_missing"] = 0.0
+            residue_features[key] = entry
+        if residue_features:
+            return residue_features
 
     pdb_path = structure_path / f"{structure_name}.pdb"
     std_output_path = structure_path / "StdOutputScore.txt"

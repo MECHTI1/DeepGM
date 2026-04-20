@@ -16,6 +16,8 @@ The main runtime code lives in `training/`, `graph/`, `model.py`, and `train.py`
 The `prepare_training_and_test_set/` scripts are for dataset preparation, not the main training loop.
 `requirements.txt` covers the core training and test stack used in the current repo.
 If you work on embedding generation, you may need extra packages used by `embed_helpers/` in addition to the core requirements.
+Modern replacements for the legacy Bluues/Rosetta external residue features live in `updated_feature_extraction/`.
+They write structure-indexed JSON feature folders into `.data/updated_feature_extraction/`.
 
 Colab example:
 
@@ -52,3 +54,12 @@ Override them with normal training args such as `--structure-dir` and `--runs-di
 or by setting `DEEPGM_COLAB_STRUCTURE_DIR`, `DEEPGM_COLAB_EMBEDDINGS_DIR`,
 `DEEPGM_COLAB_SUMMARY_CSV`, `DEEPGM_COLAB_RUNS_DIR`, and
 `DEEPGM_COLAB_EXTERNAL_FEATURES_DIR`.
+
+Updated feature generation example:
+
+```bash
+/home/mechti/miniconda3/envs/deepgm-py312/bin/python -m updated_feature_extraction.generate_features \
+  --structure-dir /media/Data/pinmymetal_sets/mahomes/train_set \
+  --output-root /home/mechti/PycharmProjects/DeepGM/.data/updated_feature_extraction \
+  --skip-existing
+```
