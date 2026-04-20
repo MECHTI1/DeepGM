@@ -9,13 +9,16 @@ from graph.construction import (
     extract_metal_pockets_from_structure,
     parse_structure_file,
 )
+from label_schemes import map_site_metal_symbols
 from training.feature_sources import (
     attach_structure_features_to_pocket,
     build_feature_load_report,
     load_structure_feature_sources,
 )
 from training.labels import infer_metal_target_class_from_pocket, parse_ec_top_level_from_structure_path
-from training.site_filter import SiteKey, pocket_matches_allowed_sites
+from training.site_filter import AllowedSiteMetalLabels, matched_site_metal_types, pocket_matches_allowed_sites
+
+
 def pocket_has_full_supervision(pocket: PocketRecord) -> bool:
     return pocket.y_metal is not None and pocket.y_ec is not None
 
@@ -59,7 +62,7 @@ def load_structure_pockets(
     *,
     structure_path: Path,
     structure_root: Path,
-    allowed_site_keys: set[SiteKey] | None,
+    allowed_site_metal_labels: AllowedSiteMetalLabels | None,
     esm_dim: int,
     embeddings_dir: Path,
     require_esm_embeddings: bool,
@@ -102,10 +105,11 @@ def load_structure_pockets(
             structure_path=structure_path,
         )
 
-        if allowed_site_keys is not None and not pocket_matches_allowed_sites(
+        matched_summary_metal_types: set[str] = set()
+        if allowed_site_metal_labels is not None and not pocket_matches_allowed_sites(
             pocket,
             structure_path,
-            allowed_site_keys,
+            allowed_site_metal_labels,
         ):
             skipped_pockets.append(
                 {
@@ -115,12 +119,26 @@ def load_structure_pockets(
                 }
             )
             continue
+        if allowed_site_metal_labels is not None:
+            matched_summary_metal_types = matched_site_metal_types(
+                pocket,
+                structure_path,
+                allowed_site_metal_labels,
+            )
+            if matched_summary_metal_types:
+                pocket.metadata["matched_summary_site_metal_types"] = sorted(matched_summary_metal_types)
 
         try:
-            pocket.y_metal = infer_metal_target_class_from_pocket(
-                pocket,
-                unsupported_metal_policy=unsupported_metal_policy,
-            )
+            if matched_summary_metal_types:
+                pocket.y_metal = map_site_metal_symbols(
+                    sorted(matched_summary_metal_types),
+                    unsupported_metal_policy=unsupported_metal_policy,
+                )
+            else:
+                pocket.y_metal = infer_metal_target_class_from_pocket(
+                    pocket,
+                    unsupported_metal_policy=unsupported_metal_policy,
+                )
         except ValueError:
             skipped_pockets.append(
                 {

@@ -17,7 +17,7 @@ from data_structures import PocketRecord
 from training.defaults import DEFAULT_STRUCTURE_DIR, DEFAULT_TRAIN_SUMMARY_CSV
 from training.esm_feature_loading import DEFAULT_ESMC_EMBED_DIM
 from training.feature_paths import resolve_runtime_feature_paths
-from training.site_filter import resolve_allowed_site_keys
+from training.site_filter import resolve_allowed_site_metal_labels
 from training.structure_loading import (
     build_load_report,
     find_structure_files,
@@ -69,7 +69,7 @@ def load_labeled_pockets_with_report_from_dir(
     if not structure_files:
         raise FileNotFoundError(f"No structure files found under {structure_root}")
 
-    allowed_site_keys = resolve_allowed_site_keys(summary_csv)
+    allowed_site_metal_labels = resolve_allowed_site_metal_labels(summary_csv)
     embeddings_dir, feature_root_dir = resolve_runtime_feature_paths(
         structure_dir=structure_root,
         esm_embeddings_dir=esm_embeddings_dir,
@@ -84,7 +84,7 @@ def load_labeled_pockets_with_report_from_dir(
         structure_pockets, structure_fallbacks, structure_skipped_pockets = load_structure_pockets(
             structure_path=structure_path,
             structure_root=structure_root,
-            allowed_site_keys=allowed_site_keys,
+            allowed_site_metal_labels=allowed_site_metal_labels,
             esm_dim=esm_dim,
             embeddings_dir=embeddings_dir,
             require_esm_embeddings=require_esm_embeddings,

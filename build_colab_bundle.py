@@ -47,7 +47,7 @@ from training.defaults import DEFAULT_STRUCTURE_DIR
 from training.esm_feature_loading import DEFAULT_ESMC_EMBED_DIM, embedding_path_candidates
 from training.feature_paths import resolve_runtime_feature_paths
 from training.feature_sources import resolve_structure_feature_dir
-from training.site_filter import resolve_allowed_site_keys
+from training.site_filter import resolve_allowed_site_metal_labels
 from training.structure_loading import find_structure_files, load_structure_pockets
 
 
@@ -155,7 +155,7 @@ def validate_structure(
     *,
     structure_path: Path,
     structure_root: Path,
-    allowed_site_keys: set[tuple[str, str, str]] | None,
+    allowed_site_metal_labels: dict[tuple[str, str, str], str] | None,
     embeddings_dir: Path,
     feature_root_dir: Path | None,
     esm_dim: int,
@@ -170,7 +170,7 @@ def validate_structure(
         pockets, feature_fallbacks, skipped_pockets = load_structure_pockets(
             structure_path=structure_path,
             structure_root=structure_root,
-            allowed_site_keys=allowed_site_keys,
+            allowed_site_metal_labels=allowed_site_metal_labels,
             esm_dim=esm_dim,
             embeddings_dir=embeddings_dir,
             require_esm_embeddings=require_esm_embeddings,
@@ -363,7 +363,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         excluded_structure_ids = set(args.exclude_structure_id)
         require_esm_embeddings = not args.allow_missing_esm_embeddings
         require_external_features = not args.allow_missing_external_features
-        allowed_site_keys = resolve_allowed_site_keys(summary_csv)
+        allowed_site_metal_labels = resolve_allowed_site_metal_labels(summary_csv)
         resolved_embeddings_dir, resolved_feature_root_dir = resolve_runtime_feature_paths(
             structure_dir=structure_dir,
             esm_embeddings_dir=embeddings_dir,
@@ -383,7 +383,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             result = validate_structure(
                 structure_path=structure_path,
                 structure_root=structure_dir,
-                allowed_site_keys=allowed_site_keys,
+                allowed_site_metal_labels=allowed_site_metal_labels,
                 embeddings_dir=resolved_embeddings_dir,
                 feature_root_dir=resolved_feature_root_dir,
                 esm_dim=args.esm_dim,
