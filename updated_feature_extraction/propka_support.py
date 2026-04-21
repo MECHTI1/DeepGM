@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
+import numpy as np
 from biotite.structure.io import load_structure, save_structure
+
+from .constants import METAL_FORMAL_CHARGES
 
 
 @dataclass(frozen=True)
@@ -150,13 +153,42 @@ def parse_propka_output_text(text: str) -> Dict[tuple[str, int, str], PropkaResi
     return parsed
 
 
+def _is_metal_pdb_line(line: str) -> bool:
+    element = line[76:78].strip().upper()
+    if element in METAL_FORMAL_CHARGES:
+        return True
+    return line[17:20].strip().upper() in METAL_FORMAL_CHARGES
+
+
+def _sanitize_propka_pdb_text(text: str) -> str:
+    sanitized_lines: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("ATOM"):
+            sanitized_lines.append(line)
+            continue
+        if line.startswith("HETATM") and _is_metal_pdb_line(line):
+            sanitized_lines.append(line)
+            continue
+        if line.startswith(("TER", "END")):
+            sanitized_lines.append(line)
+    return "\n".join(sanitized_lines) + "\n"
+
+
+def _sanitize_propka_atom_array(atom_array):
+    keep_mask = (~atom_array.hetero) | np.isin(atom_array.element.astype(str), np.array(list(METAL_FORMAL_CHARGES)))
+    return atom_array[keep_mask]
+
+
 def _prepare_propka_input_path(structure_path: Path, temp_dir: Path) -> Path:
+    temp_dir.mkdir(parents=True, exist_ok=True)
     if structure_path.suffix.lower() == ".pdb":
         target = temp_dir / structure_path.name
-        shutil.copy2(structure_path, target)
+        sanitized_text = _sanitize_propka_pdb_text(structure_path.read_text(encoding="utf-8", errors="ignore"))
+        target.write_text(sanitized_text, encoding="utf-8")
         return target
 
     atom_array = load_structure(str(structure_path))
+    atom_array = _sanitize_propka_atom_array(atom_array)
     target = temp_dir / f"{structure_path.stem}.pdb"
     save_structure(str(target), atom_array)
     return target

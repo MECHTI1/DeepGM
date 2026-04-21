@@ -150,6 +150,7 @@ class TrainingStructureLoadingTests(unittest.TestCase):
             embeddings_dir=Path("."),
             require_esm_embeddings=False,
             feature_root_dir=Path("."),
+            external_feature_source="auto",
             require_external_features=False,
             unsupported_metal_policy="error",
         )

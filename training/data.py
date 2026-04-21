@@ -60,6 +60,7 @@ def load_labeled_pockets_with_report_from_dir(
     esm_embeddings_dir: str | Path | None = None,
     require_esm_embeddings: bool = True,
     external_features_root_dir: str | Path | None = None,
+    external_feature_source: str = "auto",
     require_external_features: bool = True,
     unsupported_metal_policy: str = "error",
 ) -> PocketLoadResult:
@@ -74,6 +75,7 @@ def load_labeled_pockets_with_report_from_dir(
         structure_dir=structure_root,
         esm_embeddings_dir=esm_embeddings_dir,
         external_features_root_dir=external_features_root_dir,
+        external_feature_source=external_feature_source,
     )
 
     pockets: List[PocketRecord] = []
@@ -89,6 +91,7 @@ def load_labeled_pockets_with_report_from_dir(
             embeddings_dir=embeddings_dir,
             require_esm_embeddings=require_esm_embeddings,
             feature_root_dir=feature_root_dir,
+            external_feature_source=external_feature_source,
             require_external_features=require_external_features,
             unsupported_metal_policy=unsupported_metal_policy,
         )
@@ -135,6 +138,7 @@ def load_training_pockets_with_report_from_dir(
     esm_embeddings_dir: str | Path | None = None,
     require_esm_embeddings: bool = True,
     external_features_root_dir: str | Path | None = None,
+    external_feature_source: str = "auto",
     require_external_features: bool = True,
     unsupported_metal_policy: str = "error",
 ) -> PocketLoadResult:
@@ -148,6 +152,7 @@ def load_training_pockets_with_report_from_dir(
         esm_embeddings_dir=esm_embeddings_dir,
         require_esm_embeddings=require_esm_embeddings,
         external_features_root_dir=external_features_root_dir,
+        external_feature_source=external_feature_source,
         require_external_features=require_external_features,
         unsupported_metal_policy=unsupported_metal_policy,
     )
@@ -162,6 +167,7 @@ def load_smoke_test_pockets_from_dir(
     esm_embeddings_dir: str | Path | None = None,
     require_esm_embeddings: bool = False,
     external_features_root_dir: str | Path | None = None,
+    external_feature_source: str = "auto",
     require_external_features: bool = False,
     unsupported_metal_policy: str = "error",
 ) -> List[PocketRecord]:
@@ -175,6 +181,7 @@ def load_smoke_test_pockets_from_dir(
         esm_embeddings_dir=esm_embeddings_dir,
         require_esm_embeddings=require_esm_embeddings,
         external_features_root_dir=external_features_root_dir,
+        external_feature_source=external_feature_source,
         require_external_features=require_external_features,
         unsupported_metal_policy=unsupported_metal_policy,
     ).pockets

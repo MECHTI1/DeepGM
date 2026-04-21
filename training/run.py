@@ -202,6 +202,9 @@ def prepare_run(config: TrainConfig) -> PreparedRun:
         esm_embeddings_dir=config.esm_embeddings_dir,
         require_esm_embeddings=config.require_esm_embeddings,
         prepare_missing_esm_embeddings=config.prepare_missing_esm_embeddings,
+        external_features_root_dir=config.external_features_root_dir,
+        external_feature_source=config.external_feature_source,
+        require_external_features=config.require_external_features,
         require_ring_edges=config.require_ring_edges,
         prepare_missing_ring_edges=config.prepare_missing_ring_edges,
     )
@@ -213,6 +216,7 @@ def prepare_run(config: TrainConfig) -> PreparedRun:
         esm_embeddings_dir=config.esm_embeddings_dir,
         require_esm_embeddings=config.require_esm_embeddings,
         external_features_root_dir=config.external_features_root_dir,
+        external_feature_source=config.external_feature_source,
         require_external_features=config.require_external_features,
         unsupported_metal_policy=config.unsupported_metal_policy,
     )

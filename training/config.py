@@ -8,6 +8,7 @@ from typing import Any, Sequence
 from data_structures import DEFAULT_EDGE_RADIUS
 from training.defaults import DEFAULT_STRUCTURE_DIR, DEFAULT_TRAIN_SUMMARY_CSV
 from training.esm_feature_loading import DEFAULT_ESMC_EMBED_DIM
+from training.feature_paths import VALID_EXTERNAL_FEATURE_SOURCE_CHOICES
 
 VALID_SPLIT_BY_CHOICES = ("pdbid", "pdbid_chain", "structure_id", "pocket_id")
 VALID_UNSUPPORTED_METAL_POLICY_CHOICES = ("error", "skip")
@@ -29,6 +30,7 @@ class TrainConfig:
     summary_csv: Path = DEFAULT_TRAIN_SUMMARY_CSV
     esm_embeddings_dir: str | None = None
     external_features_root_dir: str | None = None
+    external_feature_source: str = "auto"
     runs_dir: str | None = None
     run_name: str | None = None
     device: str = "cpu"
@@ -59,6 +61,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--summary-csv", type=Path, default=DEFAULT_TRAIN_SUMMARY_CSV)
     parser.add_argument("--esm-embeddings-dir", type=str, default=None)
     parser.add_argument("--external-features-root-dir", type=str, default=None)
+    parser.add_argument(
+        "--external-feature-source",
+        type=str,
+        default="auto",
+        choices=VALID_EXTERNAL_FEATURE_SOURCE_CHOICES,
+    )
     parser.add_argument("--runs-dir", type=str, default=None)
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu")
@@ -107,6 +115,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TrainConfig:
         summary_csv=args.summary_csv,
         esm_embeddings_dir=args.esm_embeddings_dir,
         external_features_root_dir=args.external_features_root_dir,
+        external_feature_source=args.external_feature_source,
         runs_dir=args.runs_dir,
         run_name=args.run_name,
         device=args.device,

@@ -67,6 +67,7 @@ def load_structure_pockets(
     embeddings_dir: Path,
     require_esm_embeddings: bool,
     feature_root_dir: Path,
+    external_feature_source: str,
     require_external_features: bool,
     unsupported_metal_policy: str = "error",
 ) -> tuple[list[PocketRecord], list[dict[str, str]], list[dict[str, str]]]:
@@ -84,6 +85,7 @@ def load_structure_pockets(
         embeddings_dir=embeddings_dir,
         require_esm_embeddings=require_esm_embeddings,
         feature_root_dir=feature_root_dir,
+        external_feature_source=external_feature_source,
         require_external_features=require_external_features,
         feature_fallbacks=feature_fallbacks,
     )

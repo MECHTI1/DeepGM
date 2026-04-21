@@ -36,23 +36,39 @@ def resolve_structure_feature_dir(
     structure_path: Path,
     structure_root: Path,
     feature_root_dir: Optional[Path],
+    external_feature_source: str,
 ) -> Optional[Path]:
     direct_candidate = structure_path.parent / structure_path.stem
-    if direct_candidate.is_dir():
-        return direct_candidate
-    if feature_root_dir is None:
-        return None
+    candidates: list[Path] = []
 
-    feature_root_dir = Path(feature_root_dir)
-    try:
-        relative_parent = structure_path.parent.relative_to(structure_root)
-    except ValueError:
-        relative_parent = Path()
+    if feature_root_dir is not None:
+        feature_root_dir = Path(feature_root_dir)
+        try:
+            relative_parent = structure_path.parent.relative_to(structure_root)
+        except ValueError:
+            relative_parent = Path()
 
-    for candidate in (
-        feature_root_dir / relative_parent / structure_path.stem,
-        feature_root_dir / structure_path.stem,
-    ):
+        root_candidates = [
+            feature_root_dir / relative_parent / structure_path.stem,
+            feature_root_dir / structure_path.stem,
+        ]
+    else:
+        root_candidates = []
+
+    if external_feature_source == "updated":
+        candidates.extend(root_candidates)
+    elif external_feature_source == "bluues_rosetta":
+        candidates.append(direct_candidate)
+        candidates.extend(root_candidates)
+    else:
+        candidates.extend(root_candidates)
+        candidates.append(direct_candidate)
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
         if candidate.is_dir():
             return candidate
     return None
@@ -63,11 +79,13 @@ def load_external_feature_lookup_for_structure(
     structure_path: Path,
     structure_root: Path,
     feature_root_dir: Optional[Path],
+    external_feature_source: str,
 ) -> Dict[ResidueKey, Dict[str, float]]:
     feature_dir = resolve_structure_feature_dir(
         structure_path=structure_path,
         structure_root=structure_root,
         feature_root_dir=feature_root_dir,
+        external_feature_source=external_feature_source,
     )
     if feature_dir is None:
         raise FileNotFoundError(f"No external feature directory found for {structure_path.stem}.")
@@ -82,6 +100,7 @@ def load_structure_feature_sources(
     embeddings_dir: Path,
     require_esm_embeddings: bool,
     feature_root_dir: Path,
+    external_feature_source: str,
     require_external_features: bool,
     feature_fallbacks: List[Dict[str, str]],
 ) -> StructureFeatureSources:
@@ -107,6 +126,7 @@ def load_structure_feature_sources(
             structure_path=structure_path,
             structure_root=structure_root,
             feature_root_dir=feature_root_dir,
+            external_feature_source=external_feature_source,
         )
     except FileNotFoundError as exc:
         if require_external_features:

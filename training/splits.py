@@ -106,6 +106,7 @@ def build_dataset_summary(
         "summary_csv": str(config.summary_csv),
         "esm_embeddings_dir": config.esm_embeddings_dir,
         "external_features_root_dir": config.external_features_root_dir,
+        "external_feature_source": config.external_feature_source,
         "n_train_pockets": len(split.train_pockets),
         "n_val_pockets": len(split.val_pockets),
         "val_fraction": config.val_fraction,

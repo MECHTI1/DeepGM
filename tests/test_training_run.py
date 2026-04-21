@@ -65,6 +65,7 @@ class TrainConfigParsingTests(unittest.TestCase):
         self.assertEqual(config.val_fraction, 0.0)
         self.assertEqual(config.esm_dim, DEFAULT_ESMC_EMBED_DIM)
         self.assertEqual(config.selection_metric, "train_loss")
+        self.assertEqual(config.external_feature_source, "auto")
         self.assertTrue(config.prepare_missing_esm_embeddings)
         self.assertFalse(config.prepare_missing_ring_edges)
 
@@ -81,6 +82,8 @@ class TrainConfigParsingTests(unittest.TestCase):
                 "16",
                 "--split-by",
                 "structure_id",
+                "--external-feature-source",
+                "updated",
                 "--allow-missing-esm-embeddings",
                 "--no-prepare-missing-esm-embeddings",
                 "--prepare-missing-ring-edges",
@@ -96,6 +99,7 @@ class TrainConfigParsingTests(unittest.TestCase):
         self.assertEqual(config.epochs, 3)
         self.assertEqual(config.batch_size, 16)
         self.assertEqual(config.split_by, "structure_id")
+        self.assertEqual(config.external_feature_source, "updated")
         self.assertFalse(config.require_esm_embeddings)
         self.assertFalse(config.prepare_missing_esm_embeddings)
         self.assertTrue(config.require_external_features)
