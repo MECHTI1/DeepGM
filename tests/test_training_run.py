@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from training.run import (
     PocketSplit,
     PreparedRun,
     build_dataset_summary,
+    prepare_run,
     split_pockets,
     train_and_select_checkpoint,
     validate_training_configuration,
@@ -62,12 +64,20 @@ class TrainConfigParsingTests(unittest.TestCase):
     def test_parse_args_defaults_to_train_loss_without_validation(self) -> None:
         config = parse_args([])
 
+        self.assertEqual(config.task, "joint")
         self.assertEqual(config.val_fraction, 0.0)
         self.assertEqual(config.esm_dim, DEFAULT_ESMC_EMBED_DIM)
         self.assertEqual(config.selection_metric, "train_loss")
         self.assertEqual(config.external_feature_source, "auto")
         self.assertTrue(config.prepare_missing_esm_embeddings)
         self.assertFalse(config.prepare_missing_ring_edges)
+        self.assertEqual(config.invalid_structure_policy, "skip")
+
+    def test_parse_args_uses_task_specific_default_selection_metric(self) -> None:
+        config = parse_args(["--task", "metal", "--val-fraction", "0.25"])
+
+        self.assertEqual(config.task, "metal")
+        self.assertEqual(config.selection_metric, "val_metal_balanced_acc")
 
     def test_parse_args_builds_expected_config(self) -> None:
         config = parse_args(
@@ -76,6 +86,8 @@ class TrainConfigParsingTests(unittest.TestCase):
                 "/tmp/structures",
                 "--summary-csv",
                 "/tmp/summary.csv",
+                "--task",
+                "ec",
                 "--epochs",
                 "3",
                 "--batch-size",
@@ -96,6 +108,7 @@ class TrainConfigParsingTests(unittest.TestCase):
 
         self.assertEqual(config.structure_dir, Path("/tmp/structures"))
         self.assertEqual(config.summary_csv, Path("/tmp/summary.csv"))
+        self.assertEqual(config.task, "ec")
         self.assertEqual(config.epochs, 3)
         self.assertEqual(config.batch_size, 16)
         self.assertEqual(config.split_by, "structure_id")
@@ -151,6 +164,19 @@ class TrainingSplitTests(unittest.TestCase):
         self.assertEqual(set(assignment), {"p1", "p2", "p3", "p4"})
         self.assertEqual(assignment["p1"], assignment["p2"])
 
+    def test_split_pockets_balances_ec_labels_for_ec_task(self) -> None:
+        pockets = [
+            make_pocket(structure_id="1abc__chain_A__EC_1.1.1.1", pocket_id="p1", y_metal=0, y_ec=0),
+            make_pocket(structure_id="2abc__chain_A__EC_2.2.2.2", pocket_id="p2", y_metal=0, y_ec=0),
+            make_pocket(structure_id="3abc__chain_A__EC_3.3.3.3", pocket_id="p3", y_metal=1, y_ec=1),
+            make_pocket(structure_id="4abc__chain_A__EC_4.4.4.4", pocket_id="p4", y_metal=1, y_ec=1),
+        ]
+
+        split = split_pockets(pockets, val_fraction=0.5, split_by="pdbid", seed=7, task="ec")
+
+        val_ec_ids = sorted(int(pocket.y_ec) for pocket in split.val_pockets)
+        self.assertEqual(val_ec_ids, [0, 1])
+
 
 class DatasetSummaryTests(unittest.TestCase):
     def test_build_dataset_summary_reports_split_counts_and_label_distribution(self) -> None:
@@ -188,9 +214,11 @@ class DatasetSummaryTests(unittest.TestCase):
 
         self.assertEqual(summary["n_train_pockets"], 1)
         self.assertEqual(summary["n_val_pockets"], 1)
+        self.assertEqual(summary["task"], "joint")
         self.assertEqual(summary["split_by"], "pdbid")
         self.assertEqual(summary["selection_metric"], "val_joint_balanced_acc")
         self.assertEqual(summary["unsupported_metal_policy"], "error")
+        self.assertEqual(summary["invalid_structure_policy"], "skip")
         self.assertEqual(summary["train_metal_distribution"]["Mn"], 1)
         self.assertEqual(summary["val_metal_distribution"]["Zn"], 1)
         self.assertEqual(summary["train_feature_coverage"]["esm_residue_coverage"], 1.0)
@@ -244,7 +272,7 @@ class TrainingLoopHistoryTests(unittest.TestCase):
         mock_evaluate_split_metrics,
         _mock_train_epoch,
     ) -> None:
-        def metrics_side_effect(model, loader, device, prefix):
+        def metrics_side_effect(model, loader, device, prefix, task):
             if prefix == "train":
                 return {
                     "train_loss": 0.11,
@@ -293,6 +321,33 @@ class TrainingConfigurationValidationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "requires validation"):
             validate_training_configuration(config)
+
+    def test_metal_task_rejects_ec_selection_metric(self) -> None:
+        config = parse_args(["--task", "metal", "--selection-metric", "val_ec_balanced_acc", "--val-fraction", "0.25"])
+
+        with self.assertRaisesRegex(ValueError, "incompatible with --task metal"):
+            validate_training_configuration(config)
+
+
+class PreparationStatusTests(unittest.TestCase):
+    @patch("training.run.prepare_runtime_inputs", side_effect=RuntimeError("boom"))
+    def test_prepare_run_persists_failed_prepare_status(self, _mock_prepare_runtime_inputs) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = parse_args(
+                [
+                    "--run-name",
+                    "prepare_failure",
+                    "--runs-dir",
+                    tmpdir,
+                ]
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                prepare_run(config)
+
+            status_path = Path(tmpdir) / "prepare_failure" / "prepare_status.json"
+            self.assertTrue(status_path.is_file())
+            self.assertIn('"status": "failed"', status_path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

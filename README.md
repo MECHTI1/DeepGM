@@ -7,7 +7,16 @@ Before running project code, verify:
 If either command does not resolve to `/home/mechti/miniconda3/envs/deepgm-py312/bin/python`, use the full interpreter path explicitly for every Python command in this repo.
 Install the core dependencies with `/home/mechti/miniconda3/envs/deepgm-py312/bin/python -m pip install -r requirements.txt`.
 Run the current test suite with `/home/mechti/miniconda3/envs/deepgm-py312/bin/python -m unittest discover`.
-The current training entry point is `/home/mechti/miniconda3/envs/deepgm-py312/bin/python train.py`.
+Use separate training entry points for the two supervised tasks:
+- `/home/mechti/miniconda3/envs/deepgm-py312/bin/python train_metal.py`
+- `/home/mechti/miniconda3/envs/deepgm-py312/bin/python train_ec.py`
+These wrappers enforce the requested training policy:
+- separate runs for metal and EC, not one joint default run
+- updated external features via `--external-feature-source updated`
+- required ESM embeddings and required external features for loaded structures
+- validation-enabled checkpoint selection by balanced accuracy
+- batch size restricted to `8` or `16`
+`train.py` still exists as the generic low-level entry point when you explicitly want to control the task yourself, including `joint`.
 Training can now choose the external feature source with `--external-feature-source auto|bluues_rosetta|updated`.
 Use `updated` to force `.data/updated_feature_extraction` and auto-generate missing JSON feature files for the training structures.
 For Colab-friendly training defaults, use `python deepgm_colab.py` or `python -m deepgm_colab`.
@@ -25,6 +34,13 @@ Colab example:
 
 ```bash
 python deepgm_colab.py --mount-drive --epochs 3 --batch-size 4 --val-fraction 0.2
+```
+
+Dedicated local training examples:
+
+```bash
+/home/mechti/miniconda3/envs/deepgm-py312/bin/python train_metal.py --epochs 10 --batch-size 8
+/home/mechti/miniconda3/envs/deepgm-py312/bin/python train_ec.py --epochs 10 --batch-size 16
 ```
 
 Colab bundle example:

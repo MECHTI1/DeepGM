@@ -19,8 +19,20 @@ from training.labels import infer_metal_target_class_from_pocket, parse_ec_top_l
 from training.site_filter import AllowedSiteMetalLabels, matched_site_metal_types, pocket_matches_allowed_sites
 
 
-def pocket_has_full_supervision(pocket: PocketRecord) -> bool:
-    return pocket.y_metal is not None and pocket.y_ec is not None
+class StructureLoadError(ValueError):
+    """Raised when a structure cannot be parsed or aligned to required features."""
+
+
+def pocket_has_required_supervision(
+    pocket: PocketRecord,
+    required_targets: tuple[str, ...] = ("metal", "ec"),
+) -> bool:
+    for target_name in required_targets:
+        if target_name == "metal" and pocket.y_metal is None:
+            return False
+        if target_name == "ec" and pocket.y_ec is None:
+            return False
+    return True
 
 
 def is_auxiliary_structure_file(path: Path, structure_root: Path) -> bool:
@@ -49,12 +61,14 @@ def build_load_report(
     structure_files: list[Path],
     feature_fallbacks: list[dict[str, str]],
     skipped_pockets: list[dict[str, str]],
+    invalid_structures: list[dict[str, str]],
 ) -> dict[str, Any]:
     return build_feature_load_report(
         pockets=pockets,
         total_structure_files=len(structure_files),
         feature_fallbacks=feature_fallbacks,
         skipped_pockets=skipped_pockets,
+        invalid_structures=invalid_structures,
     )
 
 
@@ -71,24 +85,30 @@ def load_structure_pockets(
     require_external_features: bool,
     unsupported_metal_policy: str = "error",
 ) -> tuple[list[PocketRecord], list[dict[str, str]], list[dict[str, str]]]:
-    structure = parse_structure_file(str(structure_path), structure_id=structure_path.stem)
-    extracted_pockets = extract_metal_pockets_from_structure(structure, structure_id=structure_path.stem)
+    try:
+        structure = parse_structure_file(str(structure_path), structure_id=structure_path.stem)
+        extracted_pockets = extract_metal_pockets_from_structure(structure, structure_id=structure_path.stem)
+    except Exception as exc:
+        raise StructureLoadError(f"Failed to parse structure {structure_path}: {exc}") from exc
     if not extracted_pockets:
         return [], [], []
 
     feature_fallbacks: list[dict[str, str]] = []
     skipped_pockets: list[dict[str, str]] = []
-    feature_sources = load_structure_feature_sources(
-        structure=structure,
-        structure_path=structure_path,
-        structure_root=structure_root,
-        embeddings_dir=embeddings_dir,
-        require_esm_embeddings=require_esm_embeddings,
-        feature_root_dir=feature_root_dir,
-        external_feature_source=external_feature_source,
-        require_external_features=require_external_features,
-        feature_fallbacks=feature_fallbacks,
-    )
+    try:
+        feature_sources = load_structure_feature_sources(
+            structure=structure,
+            structure_path=structure_path,
+            structure_root=structure_root,
+            embeddings_dir=embeddings_dir,
+            require_esm_embeddings=require_esm_embeddings,
+            feature_root_dir=feature_root_dir,
+            external_feature_source=external_feature_source,
+            require_external_features=require_external_features,
+            feature_fallbacks=feature_fallbacks,
+        )
+    except ValueError as exc:
+        raise StructureLoadError(str(exc)) from exc
     ec_label = parse_ec_top_level_from_structure_path(structure_path)
 
     kept_pockets: list[PocketRecord] = []
@@ -98,14 +118,17 @@ def load_structure_pockets(
             "ring_edges_expected_path",
             str(canonical_ring_edges_output_path(structure_path)),
         )
-        attach_structure_features_to_pocket(
-            pocket,
-            feature_sources=feature_sources,
-            esm_dim=esm_dim,
-            require_esm_embeddings=require_esm_embeddings,
-            require_external_features=require_external_features,
-            structure_path=structure_path,
-        )
+        try:
+            attach_structure_features_to_pocket(
+                pocket,
+                feature_sources=feature_sources,
+                esm_dim=esm_dim,
+                require_esm_embeddings=require_esm_embeddings,
+                require_external_features=require_external_features,
+                structure_path=structure_path,
+            )
+        except ValueError as exc:
+            raise StructureLoadError(str(exc)) from exc
 
         matched_summary_metal_types: set[str] = set()
         if allowed_site_metal_labels is not None and not pocket_matches_allowed_sites(

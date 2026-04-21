@@ -11,6 +11,7 @@ from torch_geometric.nn import global_add_pool, global_mean_pool
 from torch_geometric.utils import softmax
 
 from data_structures import EDGE_SOURCE_TYPES, INTERACTION_SUMMARIES_OPTIONAL_WITH_RING
+from data_structures import MISSING_CLASS_LABEL
 from label_schemes import N_EC_CLASSES, N_METAL_CLASSES
 
 
@@ -233,6 +234,8 @@ class GVPPocketClassifier(nn.Module):
         ec_loss_weight: float = 1.0,
         metal_class_weights: Optional[Tensor] = None,
         ec_class_weights: Optional[Tensor] = None,
+        predict_metal: bool = True,
+        predict_ec: bool = True,
     ):
         super().__init__()
         # Current supervised targets:
@@ -272,18 +275,30 @@ class GVPPocketClassifier(nn.Module):
             nn.Sigmoid(),
         )
         fused_dim = 2 * hidden_s + 32
+        self.predict_metal = bool(predict_metal)
+        self.predict_ec = bool(predict_ec)
+        if not self.predict_metal and not self.predict_ec:
+            raise ValueError("GVPPocketClassifier requires at least one enabled prediction head.")
 
-        self.head_metal = nn.Sequential(
-            nn.Linear(fused_dim, hidden_s),
-            nn.SiLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_s, n_metal),
+        self.head_metal = (
+            nn.Sequential(
+                nn.Linear(fused_dim, hidden_s),
+                nn.SiLU(),
+                nn.Dropout(0.2),
+                nn.Linear(hidden_s, n_metal),
+            )
+            if self.predict_metal
+            else None
         )
-        self.head_ec = nn.Sequential(
-            nn.Linear(fused_dim, hidden_s),
-            nn.SiLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_s, n_ec),
+        self.head_ec = (
+            nn.Sequential(
+                nn.Linear(fused_dim, hidden_s),
+                nn.SiLU(),
+                nn.Dropout(0.2),
+                nn.Linear(hidden_s, n_ec),
+            )
+            if self.predict_ec
+            else None
         )
 
         self.metal_loss_weight = float(metal_loss_weight)
@@ -296,6 +311,10 @@ class GVPPocketClassifier(nn.Module):
             "ec_class_weights",
             ec_class_weights.float() if ec_class_weights is not None else torch.empty(0),
         )
+
+    @staticmethod
+    def _supervised_mask(target: Tensor) -> Tensor:
+        return target != MISSING_CLASS_LABEL
 
     def _init_vector_channels(self, x_vec: Tensor) -> Tensor:
         # x_vec arrives as three explicit geometric channels per residue; project them
@@ -312,16 +331,32 @@ class GVPPocketClassifier(nn.Module):
             rel = (data.pos[dst] - data.pos[src]).float()
         return rel.unsqueeze(1)
 
-    def _compute_supervised_loss(self, logits_metal: Tensor, logits_ec: Tensor, data: Data) -> Tensor:
+    def _compute_supervised_loss(
+        self,
+        logits_metal: Optional[Tensor],
+        logits_ec: Optional[Tensor],
+        data: Data,
+    ) -> Tensor:
         # Final baseline policy:
         # - keep class-balanced CE on both heads because both targets are imbalanced
         # - keep equal task weights so the two supervised objectives remain symmetric
         # - choose checkpoints with balanced metrics rather than introducing a more complex loss first
-        metal_weights = self.metal_class_weights if self.metal_class_weights.numel() > 0 else None
-        ec_weights = self.ec_class_weights if self.ec_class_weights.numel() > 0 else None
-        metal_loss = F.cross_entropy(logits_metal, data.y_metal, weight=metal_weights)
-        ec_loss = F.cross_entropy(logits_ec, data.y_ec, weight=ec_weights)
-        return self.metal_loss_weight * metal_loss + self.ec_loss_weight * ec_loss
+        losses: list[Tensor] = []
+        if self.predict_metal and logits_metal is not None and hasattr(data, "y_metal"):
+            metal_mask = self._supervised_mask(data.y_metal)
+            if bool(metal_mask.any().item()):
+                metal_weights = self.metal_class_weights if self.metal_class_weights.numel() > 0 else None
+                metal_loss = F.cross_entropy(logits_metal[metal_mask], data.y_metal[metal_mask], weight=metal_weights)
+                losses.append(self.metal_loss_weight * metal_loss)
+        if self.predict_ec and logits_ec is not None and hasattr(data, "y_ec"):
+            ec_mask = self._supervised_mask(data.y_ec)
+            if bool(ec_mask.any().item()):
+                ec_weights = self.ec_class_weights if self.ec_class_weights.numel() > 0 else None
+                ec_loss = F.cross_entropy(logits_ec[ec_mask], data.y_ec[ec_mask], weight=ec_weights)
+                losses.append(self.ec_loss_weight * ec_loss)
+        if not losses:
+            raise ValueError("No supervised targets were available for the enabled prediction heads.")
+        return torch.stack(losses).sum()
 
     def forward(self, data: Data) -> Dict[str, Tensor]:
         s = self.node_scalar_encoder(
@@ -367,19 +402,29 @@ class GVPPocketClassifier(nn.Module):
         fusion_gate = self.fusion_gate(torch.cat([gvp_fused, esm_fused], dim=-1))
         pocket_embed = torch.cat([gvp_fused, fusion_gate * esm_fused, site_fused], dim=-1)
 
-        logits_metal = self.head_metal(pocket_embed)
-        logits_ec = self.head_ec(pocket_embed)
-
         outputs = {
-            "logits_metal": logits_metal,
-            "logits_ec": logits_ec,
             "embed": pocket_embed,
             "gvp_embed": gvp_graph_embed,
             "esm_embed": esm_graph_embed,
             "fusion_gate": fusion_gate,
         }
+        logits_metal = self.head_metal(pocket_embed) if self.head_metal is not None else None
+        logits_ec = self.head_ec(pocket_embed) if self.head_ec is not None else None
+        if logits_metal is not None:
+            outputs["logits_metal"] = logits_metal
+        if logits_ec is not None:
+            outputs["logits_ec"] = logits_ec
 
-        if hasattr(data, "y_metal") and hasattr(data, "y_ec"):
+        has_supervised_targets = bool(
+            self.predict_metal
+            and hasattr(data, "y_metal")
+            and self._supervised_mask(data.y_metal).any().item()
+        ) or bool(
+            self.predict_ec
+            and hasattr(data, "y_ec")
+            and self._supervised_mask(data.y_ec).any().item()
+        )
+        if has_supervised_targets:
             outputs["loss"] = self._compute_supervised_loss(logits_metal, logits_ec, data)
 
         return outputs

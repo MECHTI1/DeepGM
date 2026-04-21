@@ -45,6 +45,7 @@ def split_pockets(
     val_fraction: float,
     split_by: str,
     seed: int,
+    task: str = "joint",
 ) -> PocketSplit:
     split_by = validate_split_by(split_by)
     if not 0.0 <= val_fraction < 1.0:
@@ -60,16 +61,41 @@ def split_pockets(
     generator = torch.Generator().manual_seed(seed)
     order = torch.randperm(len(group_items), generator=generator).tolist()
     shuffled = [group_items[idx] for idx in order]
+    shuffled.sort(key=lambda item: len(item[1]), reverse=True)
 
     target_val_size = max(1, int(round(len(pockets) * val_fraction)))
     val_pockets: list[PocketRecord] = []
     train_pockets: list[PocketRecord] = []
     val_count = 0
+    remaining_pocket_count = len(pockets)
+    desired_val_label_counts = desired_label_counts_for_split(pockets, task=task, val_fraction=val_fraction)
+    current_val_label_counts: dict[str, int] = {}
 
     for _group_key, group_pockets in shuffled:
-        if val_count < target_val_size:
+        group_size = len(group_pockets)
+        remaining_pocket_count -= group_size
+        must_assign_to_val = val_count < target_val_size and (val_count + remaining_pocket_count) < target_val_size
+        proposed_val_label_counts = merge_label_counts(
+            current_val_label_counts,
+            label_counts_for_pockets(group_pockets, task=task),
+        )
+        current_penalty = val_assignment_penalty(
+            val_count=val_count,
+            target_val_size=target_val_size,
+            current_label_counts=current_val_label_counts,
+            desired_label_counts=desired_val_label_counts,
+        )
+        proposed_penalty = val_assignment_penalty(
+            val_count=val_count + group_size,
+            target_val_size=target_val_size,
+            current_label_counts=proposed_val_label_counts,
+            desired_label_counts=desired_val_label_counts,
+        )
+
+        if must_assign_to_val or (val_count < target_val_size and proposed_penalty <= current_penalty):
             val_pockets.extend(group_pockets)
-            val_count += len(group_pockets)
+            val_count += group_size
+            current_val_label_counts = proposed_val_label_counts
         else:
             train_pockets.extend(group_pockets)
 
@@ -80,6 +106,58 @@ def split_pockets(
         )
 
     return PocketSplit(train_pockets=train_pockets, val_pockets=val_pockets)
+
+
+def task_label_keys_for_pocket(pocket: PocketRecord, task: str) -> list[str]:
+    keys: list[str] = []
+    if task in ("joint", "metal") and pocket.y_metal is not None:
+        keys.append(f"metal:{int(pocket.y_metal)}")
+    if task in ("joint", "ec") and pocket.y_ec is not None:
+        keys.append(f"ec:{int(pocket.y_ec)}")
+    return keys
+
+
+def label_counts_for_pockets(pockets: list[PocketRecord], task: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for pocket in pockets:
+        for key in task_label_keys_for_pocket(pocket, task):
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def merge_label_counts(base: dict[str, int], extra: dict[str, int]) -> dict[str, int]:
+    merged = dict(base)
+    for key, value in extra.items():
+        merged[key] = merged.get(key, 0) + value
+    return merged
+
+
+def desired_label_counts_for_split(
+    pockets: list[PocketRecord],
+    *,
+    task: str,
+    val_fraction: float,
+) -> dict[str, float]:
+    return {
+        key: count * val_fraction
+        for key, count in label_counts_for_pockets(pockets, task).items()
+    }
+
+
+def val_assignment_penalty(
+    *,
+    val_count: int,
+    target_val_size: int,
+    current_label_counts: dict[str, int],
+    desired_label_counts: dict[str, float],
+) -> float:
+    size_penalty = abs(val_count - target_val_size)
+    label_penalty = sum(
+        abs(current_label_counts.get(key, 0) - desired_count)
+        for key, desired_count in desired_label_counts.items()
+    )
+    overshoot_penalty = max(0, val_count - target_val_size)
+    return (1000.0 * overshoot_penalty) + (2.0 * size_penalty) + (10.0 * label_penalty)
 
 
 def count_labels(
@@ -109,10 +187,12 @@ def build_dataset_summary(
         "external_feature_source": config.external_feature_source,
         "n_train_pockets": len(split.train_pockets),
         "n_val_pockets": len(split.val_pockets),
+        "task": config.task,
         "val_fraction": config.val_fraction,
         "split_by": config.split_by,
         "selection_metric": config.selection_metric,
         "unsupported_metal_policy": config.unsupported_metal_policy,
+        "invalid_structure_policy": config.invalid_structure_policy,
         "feature_load_report": feature_load_report,
         "train_feature_coverage": build_pocket_feature_coverage(split.train_pockets),
         "val_feature_coverage": build_pocket_feature_coverage(split.val_pockets),

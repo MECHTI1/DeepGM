@@ -44,6 +44,7 @@ DEFAULT_POCKET_RADIUS = 10.0 #Try also 8-12, or even more
 DEFAULT_EDGE_RADIUS = 8.0 #Try also 6-8, or even more
 DEFAULT_MULTINUCLEAR_MERGE_DISTANCE = 4.5
 GENERIC_METAL_ELEMENT = "METAL"
+MISSING_CLASS_LABEL = -1
 
 # Used only to detect the metal-centered sites currently supported by the
 # training label policy; the true metal identity should stay out of the model

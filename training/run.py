@@ -13,7 +13,7 @@ from torch_geometric.loader import DataLoader
 from label_schemes import EC_TOP_LEVEL_LABELS, METAL_TARGET_LABELS, N_EC_CLASSES, N_METAL_CLASSES
 from model import GVPPocketClassifier
 from project_paths import resolve_runs_dir
-from training.config import TrainConfig, config_to_payload
+from training.config import TrainConfig, config_to_payload, required_targets_for_task
 from training.data import load_training_pockets_with_report_from_dir
 from training.graph_dataset import (
     FeatureNormalizationStats,
@@ -63,6 +63,17 @@ def save_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def prepare_status_payload(*, stage: str, status: str, config_payload: dict[str, Any], extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "stage": stage,
+        "status": status,
+        "config": config_payload,
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
 def validate_training_configuration(config: TrainConfig) -> None:
     if config.val_fraction == 0.0 and config.selection_metric.startswith("val_"):
         raise ValueError(
@@ -70,9 +81,34 @@ def validate_training_configuration(config: TrainConfig) -> None:
             f"{config.selection_metric!r} requires validation, but --val-fraction is 0. "
             "Either enable validation or choose a train-based metric such as 'train_loss'."
         )
+    if config.task == "metal" and ("ec_" in config.selection_metric or "joint_" in config.selection_metric):
+        raise ValueError(
+            f"Selection metric {config.selection_metric!r} is incompatible with --task metal. "
+            "Use train_loss or a metal validation metric."
+        )
+    if config.task == "ec" and ("metal_" in config.selection_metric or "joint_" in config.selection_metric):
+        raise ValueError(
+            f"Selection metric {config.selection_metric!r} is incompatible with --task ec. "
+            "Use train_loss or an EC validation metric."
+        )
 
 
-def evaluate_split_metrics(model, loader: DataLoader | None, device: str, prefix: str) -> dict[str, Any]:
+def task_predicts_metal(task: str) -> bool:
+    return task in ("joint", "metal")
+
+
+def task_predicts_ec(task: str) -> bool:
+    return task in ("joint", "ec")
+
+
+def evaluate_split_metrics(
+    model,
+    loader: DataLoader | None,
+    device: str,
+    prefix: str,
+    *,
+    task: str,
+) -> dict[str, Any]:
     if loader is None:
         return {}
 
@@ -80,7 +116,7 @@ def evaluate_split_metrics(model, loader: DataLoader | None, device: str, prefix
     payload = {
         f"{prefix}_loss": predictions["loss"],
     }
-    if "metal_y" in predictions:
+    if task_predicts_metal(task) and "metal_y" in predictions and "metal_logits" in predictions:
         metal_metrics = classification_metrics_from_logits(predictions["metal_logits"], predictions["metal_y"])
         payload.update(
             {
@@ -95,7 +131,7 @@ def evaluate_split_metrics(model, loader: DataLoader | None, device: str, prefix
         )
     else:
         payload[f"{prefix}_metal_acc"] = None
-    if "ec_y" in predictions:
+    if task_predicts_ec(task) and "ec_y" in predictions and "ec_logits" in predictions:
         ec_metrics = classification_metrics_from_logits(predictions["ec_logits"], predictions["ec_y"])
         payload.update(
             {
@@ -197,125 +233,195 @@ def metric_sort_value(record: dict[str, Any], selection_metric: str) -> tuple[fl
 def prepare_run(config: TrainConfig) -> PreparedRun:
     validate_training_configuration(config)
     config_payload = config_to_payload(config)
-    runtime_preparation_report = prepare_runtime_inputs(
-        structure_dir=config.structure_dir,
-        esm_embeddings_dir=config.esm_embeddings_dir,
-        require_esm_embeddings=config.require_esm_embeddings,
-        prepare_missing_esm_embeddings=config.prepare_missing_esm_embeddings,
-        external_features_root_dir=config.external_features_root_dir,
-        external_feature_source=config.external_feature_source,
-        require_external_features=config.require_external_features,
-        require_ring_edges=config.require_ring_edges,
-        prepare_missing_ring_edges=config.prepare_missing_ring_edges,
+    run_dir = build_run_dir(config)
+    save_json(
+        run_dir / "prepare_status.json",
+        prepare_status_payload(stage="prepare_run", status="started", config_payload=config_payload),
     )
-    load_result = load_training_pockets_with_report_from_dir(
-        structure_dir=config.structure_dir,
-        require_full_labels=True,
-        summary_csv=config.summary_csv,
-        esm_dim=config.esm_dim,
-        esm_embeddings_dir=config.esm_embeddings_dir,
-        require_esm_embeddings=config.require_esm_embeddings,
-        external_features_root_dir=config.external_features_root_dir,
-        external_feature_source=config.external_feature_source,
-        require_external_features=config.require_external_features,
-        unsupported_metal_policy=config.unsupported_metal_policy,
-    )
-    pockets = load_result.pockets
-    if not pockets:
-        raise ValueError("No training pockets were loaded.")
+    try:
+        runtime_preparation_report = prepare_runtime_inputs(
+            structure_dir=config.structure_dir,
+            esm_embeddings_dir=config.esm_embeddings_dir,
+            require_esm_embeddings=config.require_esm_embeddings,
+            prepare_missing_esm_embeddings=config.prepare_missing_esm_embeddings,
+            external_features_root_dir=config.external_features_root_dir,
+            external_feature_source=config.external_feature_source,
+            require_external_features=config.require_external_features,
+            require_ring_edges=config.require_ring_edges,
+            prepare_missing_ring_edges=config.prepare_missing_ring_edges,
+        )
+        save_json(
+            run_dir / "prepare_status.json",
+            prepare_status_payload(
+                stage="runtime_preparation",
+                status="completed",
+                config_payload=config_payload,
+                extra={"runtime_preparation": runtime_preparation_report},
+            ),
+        )
+        load_result = load_training_pockets_with_report_from_dir(
+            structure_dir=config.structure_dir,
+            require_full_labels=True,
+            required_targets=required_targets_for_task(config.task),
+            summary_csv=config.summary_csv,
+            esm_dim=config.esm_dim,
+            esm_embeddings_dir=config.esm_embeddings_dir,
+            require_esm_embeddings=config.require_esm_embeddings,
+            external_features_root_dir=config.external_features_root_dir,
+            external_feature_source=config.external_feature_source,
+            require_external_features=config.require_external_features,
+            unsupported_metal_policy=config.unsupported_metal_policy,
+            invalid_structure_policy=config.invalid_structure_policy,
+        )
+        pockets = load_result.pockets
+        if not pockets:
+            raise ValueError("No training pockets were loaded.")
+        save_json(
+            run_dir / "prepare_status.json",
+            prepare_status_payload(
+                stage="load_training_pockets",
+                status="completed",
+                config_payload=config_payload,
+                extra={"n_loaded_pockets": len(pockets), "feature_load_report": load_result.feature_report},
+            ),
+        )
 
-    split = split_pockets(
-        pockets,
-        val_fraction=config.val_fraction,
-        split_by=config.split_by,
-        seed=config.seed,
-    )
-    dataset_summary = build_dataset_summary(
-        split,
-        config,
-        feature_load_report=load_result.feature_report,
-    )
-    dataset_summary["runtime_preparation"] = runtime_preparation_report
-    train_graphs = build_graph_data_list(
-        split.train_pockets,
-        esm_dim=config.esm_dim,
-        edge_radius=config.edge_radius,
-        require_ring_edges=config.require_ring_edges,
-    )
-    val_graphs = (
-        build_graph_data_list(
-            split.val_pockets,
+        split = split_pockets(
+            pockets,
+            val_fraction=config.val_fraction,
+            split_by=config.split_by,
+            seed=config.seed,
+            task=config.task,
+        )
+        dataset_summary = build_dataset_summary(
+            split,
+            config,
+            feature_load_report=load_result.feature_report,
+        )
+        dataset_summary["runtime_preparation"] = runtime_preparation_report
+        train_graphs = build_graph_data_list(
+            split.train_pockets,
             esm_dim=config.esm_dim,
             edge_radius=config.edge_radius,
             require_ring_edges=config.require_ring_edges,
         )
-        if split.val_pockets
-        else None
-    )
-    dataset_summary["preflight"] = run_preflight_checks(
-        split,
-        config,
-        train_graphs=train_graphs,
-        val_graphs=val_graphs,
-    )
-    run_dir = build_run_dir(config)
-    normalization_stats = compute_feature_normalization_stats(train_graphs, clamp_value=5.0)
-    train_loader = DataLoader(
-        PocketGraphDataset(
-            split.train_pockets,
-            esm_dim=config.esm_dim,
-            edge_radius=config.edge_radius,
-            normalization_stats=normalization_stats,
-            require_ring_edges=config.require_ring_edges,
-            precomputed_data=train_graphs,
-        ),
-        batch_size=config.batch_size,
-        shuffle=True,
-    )
-    val_loader = (
-        DataLoader(
-            PocketGraphDataset(
+        val_graphs = (
+            build_graph_data_list(
                 split.val_pockets,
+                esm_dim=config.esm_dim,
+                edge_radius=config.edge_radius,
+                require_ring_edges=config.require_ring_edges,
+            )
+            if split.val_pockets
+            else None
+        )
+        save_json(
+            run_dir / "prepare_status.json",
+            prepare_status_payload(
+                stage="build_graphs",
+                status="completed",
+                config_payload=config_payload,
+                extra={
+                    "n_train_graphs": len(train_graphs),
+                    "n_val_graphs": 0 if val_graphs is None else len(val_graphs),
+                },
+            ),
+        )
+        dataset_summary["preflight"] = run_preflight_checks(
+            split,
+            config,
+            train_graphs=train_graphs,
+            val_graphs=val_graphs,
+        )
+        save_json(
+            run_dir / "prepare_status.json",
+            prepare_status_payload(
+                stage="preflight",
+                status="completed",
+                config_payload=config_payload,
+                extra={"dataset_summary": dataset_summary},
+            ),
+        )
+        normalization_stats = compute_feature_normalization_stats(train_graphs, clamp_value=5.0)
+        train_loader = DataLoader(
+            PocketGraphDataset(
+                split.train_pockets,
                 esm_dim=config.esm_dim,
                 edge_radius=config.edge_radius,
                 normalization_stats=normalization_stats,
                 require_ring_edges=config.require_ring_edges,
-                precomputed_data=val_graphs,
+                precomputed_data=train_graphs,
             ),
             batch_size=config.batch_size,
-            shuffle=False,
+            shuffle=True,
         )
-        if split.val_pockets
-        else None
-    )
+        val_loader = (
+            DataLoader(
+                PocketGraphDataset(
+                    split.val_pockets,
+                    esm_dim=config.esm_dim,
+                    edge_radius=config.edge_radius,
+                    normalization_stats=normalization_stats,
+                    require_ring_edges=config.require_ring_edges,
+                    precomputed_data=val_graphs,
+                ),
+                batch_size=config.batch_size,
+                shuffle=False,
+            )
+            if split.val_pockets
+            else None
+        )
 
-    metal_class_weights, ec_class_weights = balanced_class_weights_from_pockets(
-        split.train_pockets,
-        n_metal_classes=N_METAL_CLASSES,
-        n_ec_classes=N_EC_CLASSES,
-    )
+        metal_class_weights = None
+        ec_class_weights = None
+        computed_metal_weights, computed_ec_weights = balanced_class_weights_from_pockets(
+            split.train_pockets,
+            n_metal_classes=N_METAL_CLASSES,
+            n_ec_classes=N_EC_CLASSES,
+        )
+        if task_predicts_metal(config.task):
+            metal_class_weights = computed_metal_weights
+        if task_predicts_ec(config.task):
+            ec_class_weights = computed_ec_weights
 
-    model = GVPPocketClassifier(
-        esm_dim=config.esm_dim,
-        metal_class_weights=metal_class_weights,
-        ec_class_weights=ec_class_weights,
-    ).to(config.device)
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config.learning_rate,
-        weight_decay=config.weight_decay,
-    )
-    return PreparedRun(
-        config_payload=config_payload,
-        run_dir=run_dir,
-        split=split,
-        dataset_summary=dataset_summary,
-        normalization_stats=normalization_stats,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        model=model,
-        optimizer=optimizer,
-    )
+        model = GVPPocketClassifier(
+            esm_dim=config.esm_dim,
+            metal_class_weights=metal_class_weights,
+            ec_class_weights=ec_class_weights,
+            predict_metal=task_predicts_metal(config.task),
+            predict_ec=task_predicts_ec(config.task),
+        ).to(config.device)
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay,
+        )
+        save_json(
+            run_dir / "prepare_status.json",
+            prepare_status_payload(stage="prepare_run", status="ready", config_payload=config_payload),
+        )
+        return PreparedRun(
+            config_payload=config_payload,
+            run_dir=run_dir,
+            split=split,
+            dataset_summary=dataset_summary,
+            normalization_stats=normalization_stats,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            model=model,
+            optimizer=optimizer,
+        )
+    except Exception as exc:
+        save_json(
+            run_dir / "prepare_status.json",
+            prepare_status_payload(
+                stage="prepare_run",
+                status="failed",
+                config_payload=config_payload,
+                extra={"error": str(exc)},
+            ),
+        )
+        raise
 
 
 def train_and_select_checkpoint(
@@ -327,7 +433,13 @@ def train_and_select_checkpoint(
     best_checkpoint = None
     for epoch in range(1, config.epochs + 1):
         train_loss = train_epoch(prepared.model, prepared.train_loader, prepared.optimizer, device=config.device)
-        train_metrics = evaluate_split_metrics(prepared.model, prepared.train_loader, config.device, prefix="train")
+        train_metrics = evaluate_split_metrics(
+            prepared.model,
+            prepared.train_loader,
+            config.device,
+            prefix="train",
+            task=config.task,
+        )
         train_metrics.pop("train_loss", None)
         record = {
             "epoch": epoch,
@@ -335,7 +447,13 @@ def train_and_select_checkpoint(
             **train_metrics,
         }
 
-        val_metrics = evaluate_split_metrics(prepared.model, prepared.val_loader, config.device, prefix="val")
+        val_metrics = evaluate_split_metrics(
+            prepared.model,
+            prepared.val_loader,
+            config.device,
+            prefix="val",
+            task=config.task,
+        )
         record.update(val_metrics)
         current_metric, maximize = metric_sort_value(record, config.selection_metric)
         is_better = (

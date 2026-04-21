@@ -170,6 +170,28 @@ class TrainingPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fewer than 2 metal classes"):
             run_preflight_checks(split, config)
 
+    def test_run_preflight_checks_allows_single_metal_class_for_ec_task(self) -> None:
+        split = PocketSplit(
+            train_pockets=[
+                make_graphable_pocket(pocket_id="train-a", shift=0.0, y_metal=0, y_ec=1),
+                make_graphable_pocket(pocket_id="train-b", shift=4.0, y_metal=0, y_ec=2),
+            ],
+            val_pockets=[],
+        )
+        config = parse_args(["--task", "ec", "--esm-dim", "8", "--edge-radius", "3.0"])
+
+        report = run_preflight_checks(split, config)
+
+        self.assertEqual(
+            report,
+            {
+                "warnings": [
+                    "Training split has no ESM residue coverage.",
+                    "Training split has no external feature residue coverage.",
+                ]
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -135,6 +135,53 @@ class ModelSmokeTests(unittest.TestCase):
         self.assertEqual(tuple(outputs["embed"].shape), (2, 288))
         self.assertTrue(torch.isfinite(outputs["loss"]))
 
+    def test_metal_only_model_forward_omits_ec_head(self) -> None:
+        torch.manual_seed(0)
+        esm_dim = 8
+        pockets = [
+            make_pocket(pocket_id="pocket-a", esm_dim=esm_dim, metal_shift=0.0, y_metal=0, y_ec=1),
+            make_pocket(pocket_id="pocket-b", esm_dim=esm_dim, metal_shift=5.0, y_metal=1, y_ec=2),
+        ]
+
+        dataset = PocketGraphDataset(pockets, esm_dim=esm_dim, edge_radius=3.0)
+        loader = DataLoader(dataset, batch_size=2, shuffle=False)
+        batch = next(iter(loader))
+        del batch.y_ec
+
+        model = GVPPocketClassifier(esm_dim=esm_dim, predict_metal=True, predict_ec=False)
+        model.eval()
+        outputs = model(batch)
+
+        self.assertIn("logits_metal", outputs)
+        self.assertNotIn("logits_ec", outputs)
+        self.assertIn("loss", outputs)
+        self.assertEqual(tuple(outputs["logits_metal"].shape), (2, N_METAL_CLASSES))
+        self.assertTrue(torch.isfinite(outputs["loss"]))
+
+    def test_batching_handles_missing_auxiliary_labels(self) -> None:
+        torch.manual_seed(0)
+        esm_dim = 8
+        pockets = [
+            make_pocket(pocket_id="pocket-a", esm_dim=esm_dim, metal_shift=0.0, y_metal=0, y_ec=1),
+            make_pocket(pocket_id="pocket-b", esm_dim=esm_dim, metal_shift=5.0, y_metal=1, y_ec=2),
+        ]
+        pockets[1].y_metal = None
+
+        dataset = PocketGraphDataset(pockets, esm_dim=esm_dim, edge_radius=3.0)
+        loader = DataLoader(dataset, batch_size=2, shuffle=False)
+        batch = next(iter(loader))
+
+        model = GVPPocketClassifier(esm_dim=esm_dim, predict_metal=False, predict_ec=True)
+        model.eval()
+        outputs = model(batch)
+
+        self.assertIn("logits_ec", outputs)
+        self.assertNotIn("logits_metal", outputs)
+        self.assertIn("loss", outputs)
+        self.assertEqual(tuple(batch.y_metal.shape), (2,))
+        self.assertEqual(int(batch.y_metal[1].item()), -1)
+        self.assertTrue(torch.isfinite(outputs["loss"]))
+
 
 if __name__ == "__main__":
     unittest.main()

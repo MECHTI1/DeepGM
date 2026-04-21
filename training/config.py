@@ -12,6 +12,8 @@ from training.feature_paths import VALID_EXTERNAL_FEATURE_SOURCE_CHOICES
 
 VALID_SPLIT_BY_CHOICES = ("pdbid", "pdbid_chain", "structure_id", "pocket_id")
 VALID_UNSUPPORTED_METAL_POLICY_CHOICES = ("error", "skip")
+VALID_INVALID_STRUCTURE_POLICY_CHOICES = ("error", "skip")
+VALID_TASK_CHOICES = ("joint", "metal", "ec")
 VALID_SELECTION_METRIC_CHOICES = (
     "train_loss",
     "val_loss",
@@ -34,6 +36,7 @@ class TrainConfig:
     runs_dir: str | None = None
     run_name: str | None = None
     device: str = "cpu"
+    task: str = "joint"
     epochs: int = 10
     batch_size: int = 8
     learning_rate: float = 3e-4
@@ -50,6 +53,7 @@ class TrainConfig:
     require_external_features: bool = True
     prepare_missing_ring_edges: bool = False
     unsupported_metal_policy: str = "error"
+    invalid_structure_policy: str = "skip"
     selection_metric: str = "train_loss"
 
 
@@ -70,6 +74,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runs-dir", type=str, default=None)
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--task", type=str, default="joint", choices=VALID_TASK_CHOICES)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--esm-dim", type=int, default=DEFAULT_ESMC_EMBED_DIM)
@@ -88,6 +93,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default="error",
         choices=VALID_UNSUPPORTED_METAL_POLICY_CHOICES,
+    )
+    parser.add_argument(
+        "--invalid-structure-policy",
+        type=str,
+        default="skip",
+        choices=VALID_INVALID_STRUCTURE_POLICY_CHOICES,
     )
     parser.add_argument(
         "--selection-metric",
@@ -109,7 +120,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TrainConfig:
     args = parser.parse_args(argv)
     selection_metric = args.selection_metric
     if selection_metric is None:
-        selection_metric = "val_joint_balanced_acc" if args.val_fraction > 0.0 else "train_loss"
+        selection_metric = default_selection_metric_for_task(args.task, has_validation=args.val_fraction > 0.0)
     return TrainConfig(
         structure_dir=args.structure_dir,
         summary_csv=args.summary_csv,
@@ -119,6 +130,7 @@ def parse_args(argv: Sequence[str] | None = None) -> TrainConfig:
         runs_dir=args.runs_dir,
         run_name=args.run_name,
         device=args.device,
+        task=args.task,
         epochs=args.epochs,
         batch_size=args.batch_size,
         esm_dim=args.esm_dim,
@@ -134,7 +146,36 @@ def parse_args(argv: Sequence[str] | None = None) -> TrainConfig:
         require_external_features=not args.allow_missing_external_features,
         prepare_missing_ring_edges=args.prepare_missing_ring_edges,
         unsupported_metal_policy=args.unsupported_metal_policy,
+        invalid_structure_policy=args.invalid_structure_policy,
         selection_metric=selection_metric,
+    )
+
+
+def required_targets_for_task(task: str) -> tuple[str, ...]:
+    if task == "joint":
+        return ("metal", "ec")
+    if task == "metal":
+        return ("metal",)
+    if task == "ec":
+        return ("ec",)
+    raise ValueError(
+        f"Unsupported training task {task!r}. "
+        f"Expected one of: {', '.join(repr(choice) for choice in VALID_TASK_CHOICES)}."
+    )
+
+
+def default_selection_metric_for_task(task: str, *, has_validation: bool) -> str:
+    if not has_validation:
+        return "train_loss"
+    if task == "joint":
+        return "val_joint_balanced_acc"
+    if task == "metal":
+        return "val_metal_balanced_acc"
+    if task == "ec":
+        return "val_ec_balanced_acc"
+    raise ValueError(
+        f"Unsupported training task {task!r}. "
+        f"Expected one of: {', '.join(repr(choice) for choice in VALID_TASK_CHOICES)}."
     )
 
 

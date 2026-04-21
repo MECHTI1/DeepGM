@@ -83,6 +83,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "external features."
         ),
     )
+    parser.add_argument(
+        "--external-feature-source",
+        type=str,
+        default="updated",
+        choices=("auto", "updated", "bluues_rosetta"),
+        help=(
+            "How to resolve external feature directories. Use 'updated' for residue_features.json roots "
+            "and 'bluues_rosetta' for legacy per-structure feature folders."
+        ),
+    )
     parser.add_argument("--output-json", type=Path, default=None)
     return parser
 
@@ -177,6 +187,7 @@ def build_legacy_test_dataset(
     require_ring_edges: bool,
     embeddings_dir: Path | None,
     external_features_root_dir: Path | None,
+    external_feature_source: str,
 ) -> LegacyTestDataset:
     pockets: list[Any] = []
     graph_data_list: list[Any] = []
@@ -209,6 +220,7 @@ def build_legacy_test_dataset(
                 embeddings_dir=resolved_embeddings_dir,
                 require_esm_embeddings=False,
                 feature_root_dir=external_features_root_dir or structure_root,
+                external_feature_source=external_feature_source,
                 require_external_features=False,
                 feature_fallbacks=structure_feature_fallbacks,
             )
@@ -422,6 +434,7 @@ def main() -> None:
         require_ring_edges=bool(checkpoint["config"].get("require_ring_edges", False)),
         embeddings_dir=args.esm_embeddings_dir,
         external_features_root_dir=args.external_features_root_dir,
+        external_feature_source=args.external_feature_source,
     )
     if not dataset.pockets:
         raise ValueError("Legacy test evaluator could not build any pockets.")

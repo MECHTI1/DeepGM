@@ -9,6 +9,7 @@ from torch_geometric.data import Data
 
 from data_structures import (
     DEFAULT_EDGE_RADIUS,
+    MISSING_CLASS_LABEL,
     PocketRecord,
 )
 from featurization import (
@@ -89,10 +90,14 @@ def pocket_to_pyg_data(
         is_multinuclear=torch.tensor([int(pocket.is_multinuclear())], dtype=torch.long),
         site_metal_stats=MultinuclearSiteHandler.site_metal_stats(pocket).unsqueeze(0),
     )
-    if pocket.y_metal is not None:
-        data.y_metal = torch.tensor([pocket.y_metal], dtype=torch.long)
-    if pocket.y_ec is not None:
-        data.y_ec = torch.tensor([pocket.y_ec], dtype=torch.long)
+    data.y_metal = torch.tensor(
+        [pocket.y_metal if pocket.y_metal is not None else MISSING_CLASS_LABEL],
+        dtype=torch.long,
+    )
+    data.y_ec = torch.tensor(
+        [pocket.y_ec if pocket.y_ec is not None else MISSING_CLASS_LABEL],
+        dtype=torch.long,
+    )
     return data
 
 

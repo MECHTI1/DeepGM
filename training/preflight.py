@@ -61,9 +61,9 @@ def run_preflight_checks(
     val_metal_ids = {int(pocket.y_metal) for pocket in split.val_pockets if pocket.y_metal is not None and int(pocket.y_metal) in METAL_TARGET_LABELS}
     val_ec_ids = {int(pocket.y_ec) for pocket in split.val_pockets if pocket.y_ec is not None and int(pocket.y_ec) in EC_TOP_LEVEL_LABELS}
 
-    if len(train_metal_ids) < 2:
+    if config.task in ("joint", "metal") and len(train_metal_ids) < 2:
         raise ValueError("Preflight failed: training split contains fewer than 2 metal classes.")
-    if len(train_ec_ids) < 2:
+    if config.task in ("joint", "ec") and len(train_ec_ids) < 2:
         raise ValueError("Preflight failed: training split contains fewer than 2 EC classes.")
 
     overlap = sorted(
@@ -84,9 +84,9 @@ def run_preflight_checks(
     val_feature_coverage = build_pocket_feature_coverage(split.val_pockets)
     warnings: list[str] = []
 
-    if config.val_fraction > 0.0 and len(val_metal_ids) < 2:
+    if config.task in ("joint", "metal") and config.val_fraction > 0.0 and len(val_metal_ids) < 2:
         warnings.append("Validation split contains fewer than 2 metal classes.")
-    if config.val_fraction > 0.0 and len(val_ec_ids) < 2:
+    if config.task in ("joint", "ec") and config.val_fraction > 0.0 and len(val_ec_ids) < 2:
         warnings.append("Validation split contains fewer than 2 EC classes.")
     if train_feature_coverage["esm_residue_coverage"] == 0.0:
         warnings.append("Training split has no ESM residue coverage.")

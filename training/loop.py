@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch_geometric.loader import DataLoader
 
-from data_structures import PocketRecord
+from data_structures import MISSING_CLASS_LABEL, PocketRecord
 
 
 def train_epoch(
@@ -78,18 +78,28 @@ def evaluate_epoch_with_predictions(
         batch = batch.to(device)
         model_outputs = model(batch)
         total += float(model_outputs["loss"].item())
-        metal_logits_all.append(model_outputs["logits_metal"].cpu())
-        ec_logits_all.append(model_outputs["logits_ec"].cpu())
-
         if hasattr(batch, "y_metal"):
-            metal_y_all.append(batch.y_metal.cpu())
+            metal_mask = batch.y_metal != MISSING_CLASS_LABEL
+            if bool(metal_mask.any().item()):
+                if "logits_metal" in model_outputs:
+                    metal_logits_all.append(model_outputs["logits_metal"][metal_mask].cpu())
+                metal_y_all.append(batch.y_metal[metal_mask].cpu())
+        elif "logits_metal" in model_outputs:
+            metal_logits_all.append(model_outputs["logits_metal"].cpu())
         if hasattr(batch, "y_ec"):
-            ec_y_all.append(batch.y_ec.cpu())
+            ec_mask = batch.y_ec != MISSING_CLASS_LABEL
+            if bool(ec_mask.any().item()):
+                if "logits_ec" in model_outputs:
+                    ec_logits_all.append(model_outputs["logits_ec"][ec_mask].cpu())
+                ec_y_all.append(batch.y_ec[ec_mask].cpu())
+        elif "logits_ec" in model_outputs:
+            ec_logits_all.append(model_outputs["logits_ec"].cpu())
 
-    result = {
-        "metal_logits": torch.cat(metal_logits_all, dim=0),
-        "ec_logits": torch.cat(ec_logits_all, dim=0),
-    }
+    result: dict[str, Tensor | float] = {}
+    if metal_logits_all:
+        result["metal_logits"] = torch.cat(metal_logits_all, dim=0)
+    if ec_logits_all:
+        result["ec_logits"] = torch.cat(ec_logits_all, dim=0)
     if metal_y_all:
         result["metal_y"] = torch.cat(metal_y_all, dim=0)
     if ec_y_all:
