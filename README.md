@@ -1,5 +1,6 @@
 # DeepGM
-
+Testing different variant:
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MECHTI1/DeepGM/blob/main/notebooks/run_deepgm.ipynb)
 Use the project interpreter `/home/mechti/miniconda3/envs/deepgm-py312/bin/python`.
 Before running project code, verify:
 - `which python`
